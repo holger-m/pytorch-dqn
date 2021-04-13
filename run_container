@@ -1,0 +1,3 @@
+docker run -it --gpus all \
+    -v /home/mohr/pytorch-dqn/container_mount:/workspace/container_mount \
+    ale_image bash
