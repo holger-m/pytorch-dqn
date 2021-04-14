@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""created 14.04.2021
+@author: holger mohr
+"""
+
+import cv2
+import numpy as np
+
+np.set_printoptions(threshold=np.inf)
+
+with open('test.npy', 'rb') as f:
+    screen_mat = np.load(f)
+
+frameSize = (screen_mat.shape[1], screen_mat.shape[0])
+
+out = cv2.VideoWriter('output_video.avi',cv2.VideoWriter_fourcc(*'DIVX'), 60, frameSize)
+
+for i in range(screen_mat.shape[3]):
+    
+    screen_vec = screen_mat[:,:,:,i]
+    
+    img = screen_vec[:,:,[2,1,0]]   # switch to BGR order
+    
+    out.write(img)
+
+out.release()
+

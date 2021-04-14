@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""created 14.04.2021
+@author: holger mohr
+"""
+
+from ale_python_interface import ALEInterface
+import numpy as np
+
+ale = ALEInterface()
+
+ale.loadROM(str.encode('/workspace/container_mount/roms/space_invaders.bin'))
+
+legal_actions = ale.getLegalActionSet()
+
+print(legal_actions)
+
+(screen_width,screen_height) = ale.getScreenDims()
+print("width/height: " +str(screen_width) + "/" + str(screen_height))
+
+screen_vec = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+
+n_steps_60hz = 300
+
+screen_mat = np.empty((screen_height, screen_width, 3, n_steps_60hz), dtype=np.uint8)
+
+for i in range(n_steps_60hz):
+    ale.act(0)
+    ale.getScreenRGB(screen_vec)
+    screen_mat[:,:,:,i] = screen_vec
+
+with open('test.npy', 'wb') as f:
+    np.save(f, screen_mat)
