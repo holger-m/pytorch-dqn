@@ -7,28 +7,80 @@
 
 from ale_python_interface import ALEInterface
 import numpy as np
+from PIL import Image
 
-ale = ALEInterface()
+def play_at_15hz(action, screen_height, screen_width, ale):
+    
+    screen_vec_1 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+    screen_vec_2 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+    
+    reward_sum = 0
+    
+    reward = ale.act(action)
+    reward_sum = reward_sum + reward
+    
+    reward = ale.act(action)
+    reward_sum = reward_sum + reward
+    
+    reward = ale.act(action)
+    reward_sum = reward_sum + reward
+    ale.getScreenRGB(screen_vec_1)
+    
+    reward = ale.act(action)
+    reward_sum = reward_sum + reward
+    ale.getScreenRGB(screen_vec_2)
+    
+    screen_R_max = np.amax(np.dstack((screen_vec_1[:,:,0], screen_vec_2[:,:,0])), axis=2)
+    screen_G_max = np.amax(np.dstack((screen_vec_1[:,:,1], screen_vec_2[:,:,1])), axis=2)
+    screen_B_max = np.amax(np.dstack((screen_vec_1[:,:,2], screen_vec_2[:,:,2])), axis=2)
+    
+    screen_max = np.dstack((screen_R_max, screen_G_max, screen_B_max))
+    
+    return screen_max, reward_sum
 
-ale.loadROM(str.encode('/workspace/container_mount/roms/space_invaders.bin'))
 
-legal_actions = ale.getLegalActionSet()
+def preproc_screen(screen_np_in):
+    
+    screen_image = Image.fromarray(screen_np_in, 'RGB')
+    screen_ycbcr = screen_image.convert('YCbCr')
+    screen_y = screen_ycbcr.getchannel(0)
+    screen_y_84x84 = screen_y.resize((84, 84), resample=Image.BILINEAR)
+    screen_y_84x84_np = np.array(screen_y_84x84)
+    
+    #TODO: convert to single precision float and divide by 255 for DNN input
+    #return screen_y_84x84_np
+    
 
-print(legal_actions)
 
-(screen_width,screen_height) = ale.getScreenDims()
-print("width/height: " +str(screen_width) + "/" + str(screen_height))
+def main():
+    
+    ale = ALEInterface()
+    
+    ale.loadROM(str.encode('/workspace/container_mount/roms/space_invaders.bin'))
+    
+    legal_actions = ale.getLegalActionSet()
+    
+    print(legal_actions)
+    
+    (screen_width,screen_height) = ale.getScreenDims()
+    print("width/height: " +str(screen_width) + "/" + str(screen_height))
+    
+    screen_vec = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+    
+    n_steps_15hz = 300
+    
+    #screen_mat = np.empty((screen_height, screen_width, 3, n_steps_15hz), dtype=np.uint8)
+    screen_mat = np.empty((84, 84, n_steps_15hz), dtype=np.uint8)
+    
+    for i in range(n_steps_15hz):
+        screen_vec, reward = play_at_15hz(0, screen_height, screen_width, ale)
+        screen_preproc = preproc_screen(screen_vec)
+        #screen_mat[:,:,:,i] = screen_vec
+        screen_mat[:,:,i] = screen_preproc
+    
+    with open('test.npy', 'wb') as f:
+        np.save(f, screen_mat)
 
-screen_vec = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
 
-n_steps_60hz = 300
-
-screen_mat = np.empty((screen_height, screen_width, 3, n_steps_60hz), dtype=np.uint8)
-
-for i in range(n_steps_60hz):
-    ale.act(0)
-    ale.getScreenRGB(screen_vec)
-    screen_mat[:,:,:,i] = screen_vec
-
-with open('test.npy', 'wb') as f:
-    np.save(f, screen_mat)
+if __name__ == '__main__':
+    main()

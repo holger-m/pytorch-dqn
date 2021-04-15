@@ -15,13 +15,16 @@ with open('test.npy', 'rb') as f:
 
 frameSize = (screen_mat.shape[1], screen_mat.shape[0])
 
-out = cv2.VideoWriter('output_video.avi',cv2.VideoWriter_fourcc(*'DIVX'), 60, frameSize)
+out = cv2.VideoWriter('output_video.avi',cv2.VideoWriter_fourcc(*'DIVX'), 15, frameSize)
 
-for i in range(screen_mat.shape[3]):
+#for i in range(screen_mat.shape[3]):
+for i in range(screen_mat.shape[2]):
     
-    screen_vec = screen_mat[:,:,:,i]
+    #screen_vec = screen_mat[:,:,:,i]
+    screen_vec = screen_mat[:,:,i]
     
-    img = screen_vec[:,:,[2,1,0]]   # switch to BGR order
+    #img = screen_vec[:,:,[2,1,0]]   # switch to BGR order
+    img = np.dstack((screen_vec, screen_vec, screen_vec))
     
     out.write(img)
 
