@@ -21,7 +21,7 @@ out = cv2.VideoWriter('output_video.avi',cv2.VideoWriter_fourcc(*'DIVX'), 15, fr
 for i in range(screen_mat.shape[2]):
     
     #screen_vec = screen_mat[:,:,:,i]
-    screen_vec = screen_mat[:,:,i]
+    screen_vec = (255*screen_mat[:,:,i]).astype(np.uint8)
     
     #img = screen_vec[:,:,[2,1,0]]   # switch to BGR order
     img = np.dstack((screen_vec, screen_vec, screen_vec))
