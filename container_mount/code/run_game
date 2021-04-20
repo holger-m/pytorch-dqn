@@ -115,6 +115,15 @@ def main():
         screen_preproc = preproc_screen(screen_vec)
         #screen_mat[:,:,:,i] = screen_vec
         screen_mat[:,:,i] = screen_preproc
+        
+        if i == 0:
+            screen_4_frames = np.dstack(screen_mat[:,:,i], np.zeros((84,84,3), dtype=np.float32))
+        elif i == 1:
+            screen_4_frames = np.dstack(screen_mat[:,:,i], screen_mat[:,:,i-1], np.zeros((84,84,2), dtype=np.float32))
+        elif i == 2:
+            screen_4_frames = np.dstack(screen_mat[:,:,i], screen_mat[:,:,i-1], screen_mat[:,:,i-2], np.zeros((84,84,1), dtype=np.float32))
+        elif:
+            screen_4_frames = np.dstack(screen_mat[:,:,i], screen_mat[:,:,i-1], screen_mat[:,:,i-2], screen_mat[:,:,i-3])
     
     with open('test.npy', 'wb') as f:
         np.save(f, screen_mat)
