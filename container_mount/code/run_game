@@ -66,29 +66,18 @@ def nn_init():
                 nn.ReLU(),
                 nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
                 nn.ReLU(),
-                )
-            
-            
-            
-            
-            
-            self.flatten = nn.Flatten()
-            self.linear_relu_stack = nn.Sequential(
-                nn.Linear(28*28, 512),
+                nn.Flatten(),
+                nn.Linear(3136, 512),
                 nn.ReLU(),
-                nn.Linear(512, 512),
-                nn.ReLU(),
-                nn.Linear(512, 10),
-                nn.ReLU()
-            )
-
+                nn.Linear(512, 6))
+        
         def forward(self, x):
-            x = self.flatten(x)
-            logits = self.linear_relu_stack(x)
-            return logits
-
+            conv_out = self.conv(x)
+            return conv_out
+    
     model = NeuralNetwork().to("cuda")
     print(model)
+    return model
 
 def main():
     
@@ -105,10 +94,16 @@ def main():
     
     screen_vec = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
     
-    n_steps_15hz = 300
+    n_steps_15hz = 20000
     
     #screen_mat = np.empty((screen_height, screen_width, 3, n_steps_15hz), dtype=np.uint8)
     screen_mat = np.empty((84, 84, n_steps_15hz), dtype=np.float32)
+    
+    random_network = nn_init()
+    print('random network')
+    print(random_network)
+    
+    #cuda0 = torch.device('cuda:0')
     
     for i in range(n_steps_15hz):
         screen_vec, reward = play_at_15hz(0, screen_height, screen_width, ale)
@@ -117,16 +112,23 @@ def main():
         screen_mat[:,:,i] = screen_preproc
         
         if i == 0:
-            screen_4_frames = np.dstack(screen_mat[:,:,i], np.zeros((84,84,3), dtype=np.float32))
+            screen_4_frames = np.dstack((screen_mat[:,:,i], np.zeros((84,84,3), dtype=np.float32)))
         elif i == 1:
-            screen_4_frames = np.dstack(screen_mat[:,:,i], screen_mat[:,:,i-1], np.zeros((84,84,2), dtype=np.float32))
+            screen_4_frames = np.dstack((screen_mat[:,:,i], screen_mat[:,:,i-1], np.zeros((84,84,2), dtype=np.float32)))
         elif i == 2:
-            screen_4_frames = np.dstack(screen_mat[:,:,i], screen_mat[:,:,i-1], screen_mat[:,:,i-2], np.zeros((84,84,1), dtype=np.float32))
-        elif:
-            screen_4_frames = np.dstack(screen_mat[:,:,i], screen_mat[:,:,i-1], screen_mat[:,:,i-2], screen_mat[:,:,i-3])
+            screen_4_frames = np.dstack((screen_mat[:,:,i], screen_mat[:,:,i-1], screen_mat[:,:,i-2], np.zeros((84,84,1), dtype=np.float32)))
+        else:
+            screen_4_frames = np.dstack((screen_mat[:,:,i], screen_mat[:,:,i-1], screen_mat[:,:,i-2], screen_mat[:,:,i-3]))
+        
+        screen_4_frames_tensor = torch.from_numpy(screen_4_frames).cuda()
+        #print(screen_4_frames_tensor.size())
+        screen_4_frames_tensor_permute = screen_4_frames_tensor.permute(2, 0, 1)
+        #print(screen_4_frames_tensor_permute.size())
+        #print((screen_4_frames_tensor_permute[None, ...]).size())
+        random_network_out = random_network((screen_4_frames_tensor_permute[None, ...]))
     
-    with open('test.npy', 'wb') as f:
-        np.save(f, screen_mat)
+    #with open('test.npy', 'wb') as f:
+    #    np.save(f, screen_mat)
 
 
 if __name__ == '__main__':
