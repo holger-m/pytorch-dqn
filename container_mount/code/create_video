@@ -10,12 +10,12 @@ import numpy as np
 
 np.set_printoptions(threshold=np.inf)
 
-with open('test.npy', 'rb') as f:
+with open('video_episode_1.npy', 'rb') as f:
     screen_mat = np.load(f)
 
 frameSize = (screen_mat.shape[1], screen_mat.shape[0])
 
-out = cv2.VideoWriter('output_video.avi',cv2.VideoWriter_fourcc(*'DIVX'), 15, frameSize)
+out = cv2.VideoWriter('video_episode_1.avi',cv2.VideoWriter_fourcc(*'DIVX'), 15, frameSize)
 
 #for i in range(screen_mat.shape[3]):
 for i in range(screen_mat.shape[2]):

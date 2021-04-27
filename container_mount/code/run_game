@@ -97,59 +97,134 @@ def update_state(screen_mat, frame_no):
     return state_tensor_permute
 
 
-def act_eps_greedy(state, eps_param, network, no_of_act):
+def act_eps_greedy(state, eps_param, network, minimal_actions, rng):
     
     if np.random.rand() < eps_param:
-        action = np.random.randint(no_of_act)  # 0, 1, ..., no_of_act-1
+        action_index = rng.integers(len(minimal_actions))  # 0, 1, ..., no_of_act-1
     else:        
-        action = torch.argmax(network(state[None, ...])).cpu().numpy()
+        action_index = torch.argmax(network(state[None, ...])).cpu().numpy()
+    
+    action = minimal_actions[action_index]
     
     return action
+
+
+def experience_replay_buffer_init(experience_replay_buffer_size):
+    
+    screen_buffer = np.zeros((84, 84, experience_replay_buffer_size), dtype=np.float32)
+    action_buffer = np.zeros(experience_replay_buffer_size, dtype=np.uint8)
+    reward_buffer = np.zeros(experience_replay_buffer_size, dtype=np.float32)
+
+    return screen_buffer, action_buffer, reward_buffer
+
+
+def train_network(network, screen_buffer, action_buffer, reward_buffer):
+    pass
+
+
+def play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_width, screen_height, experience_replay_buffer_size, minimal_actions, rng):
+    
+    total_total_reward = 0.0
+    
+    screen_buffer, action_buffer, reward_buffer = experience_replay_buffer_init(experience_replay_buffer_size)
+    
+    no_of_sampled_buffer_points = 0
+    
+    for episode_no in range(n_episodes):
+        
+        total_reward = 0.0
+        action = 0
+        loop_count = 0
+        n_steps_15hz = int(np.ceil(max_frames_per_episode/4.0))
+        screen_mat = np.empty((84, 84, n_steps_15hz), dtype=np.float32)
+        
+        i_15_hz = 0
+        
+        while True:
+        
+            eps_alpha = 4*no_of_sampled_buffer_points/1e6
+            eps_greedy_value = 1.0*(1.0 - eps_alpha) + 0.1*eps_alpha
+            
+            screen_vec, reward = play_at_15hz(action, screen_height, screen_width, ale)
+            screen_preproc = preproc_screen(screen_vec)
+            screen_mat[:,:,i_15_hz] = screen_preproc
+            screen_4_frames_tensor_permute = update_state(screen_mat, i_15_hz)
+            action = act_eps_greedy(screen_4_frames_tensor_permute, eps_greedy_value, network, minimal_actions, rng)
+            
+            curr_buffer_index = no_of_sampled_buffer_points  % experience_replay_buffer_size
+            prev_buffer_index = (no_of_sampled_buffer_points - 1)  % experience_replay_buffer_size
+            
+            screen_buffer[:,:,curr_buffer_index] = screen_preproc
+            action_buffer[curr_buffer_index] = action
+            reward_buffer[prev_buffer_index] = reward
+            
+            if no_of_sampled_buffer_points >= experience_replay_buffer_size:
+                
+                train_network(network, screen_buffer, action_buffer, reward_buffer)
+            
+            total_reward += reward
+            total_total_reward += reward
+            i_15_hz += 1
+            no_of_sampled_buffer_points += 1
+            
+            if(ale.game_over()):
+                episode_frame_number = ale.getEpisodeFrameNumber()
+                frame_number = ale.getFrameNumber()
+                print("Frame Number: " + str(frame_number) + " Episode Frame Number: " + str(episode_frame_number))
+                print("Episode " + str(episode_no) + " ended with score: " + str(total_reward))
+                print("No. of sampled buffer points: " + str(no_of_sampled_buffer_points))
+                print("eps-greedy value: " + str(eps_greedy_value))
+                ale.reset_game()
+                break
+        
+        video_save_str = ('video_episode_' + str(episode_no) + '.npy')
+        #with open(video_save_str, 'wb') as f:
+        #    np.save(f, screen_mat)
 
 
 def main():
     
     ale = ALEInterface()
     
+    
     ale.loadROM(str.encode('/workspace/container_mount/roms/space_invaders.bin'))
     
-    legal_actions = ale.getLegalActionSet()
+    max_frames_per_episode_value = 50000
     
-    print(legal_actions)
+    ale.setInt(b'max_num_frames_per_episode', max_frames_per_episode_value)
+    max_frames_per_episode = ale.getInt(b'max_num_frames_per_episode')
+    print('max frames per episode: ' + str(max_frames_per_episode))
+    
+    minimal_actions = ale.getMinimalActionSet()
+    
+    print(minimal_actions)
     
     (screen_width,screen_height) = ale.getScreenDims()
     print("width/height: " +str(screen_width) + "/" + str(screen_height))
     
     screen_vec = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
     
-    n_steps_15hz = 200
+    rng = np.random.default_rng()
+    ale_seed = rng.integers(2^32)
+    ale.setInt(b'random_seed',ale_seed)
+    random_seed = ale.getInt(b'random_seed')
+    print("random_seed: " + str(random_seed))
     
     #screen_mat = np.empty((screen_height, screen_width, 3, n_steps_15hz), dtype=np.uint8)
-    screen_mat = np.empty((84, 84, n_steps_15hz), dtype=np.float32)
+    #screen_mat = np.empty((84, 84, n_steps_15hz), dtype=np.float32)
     
-    random_network = nn_init()
-    print('random network')
-    print(random_network)
+    network = nn_init()
+    print('network:')
+    print(network)
     
     #cuda0 = torch.device('cuda:0')
     
-    for i in range(n_steps_15hz):
-        screen_vec, reward = play_at_15hz(0, screen_height, screen_width, ale)
-        screen_preproc = preproc_screen(screen_vec)
-        #screen_mat[:,:,:,i] = screen_vec
-        screen_mat[:,:,i] = screen_preproc
-        
-        screen_4_frames_tensor_permute = update_state(screen_mat, i)
-        
-        random_network_out = act_eps_greedy(screen_4_frames_tensor_permute, 0.05, random_network, 6)
-        
-        #random_network_out = random_network((screen_4_frames_tensor_permute[None, ...]))
-        #print(random_network_out)
-        #print(random_network_out)
+    n_episodes = 20
     
-    #with open('test.npy', 'wb') as f:
-    #    np.save(f, screen_mat)
-
+    experience_replay_buffer_size = 10000
+    
+    play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_width, screen_height, experience_replay_buffer_size, minimal_actions, rng)
+    
 
 if __name__ == '__main__':
     main()
