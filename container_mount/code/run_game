@@ -106,7 +106,7 @@ def act_eps_greedy(state, eps_param, network, minimal_actions, rng):
     
     action = minimal_actions[action_index]
     
-    return action
+    return action, action_index
 
 
 def experience_replay_buffer_init(experience_replay_buffer_size):
@@ -114,19 +114,61 @@ def experience_replay_buffer_init(experience_replay_buffer_size):
     screen_buffer = np.zeros((84, 84, experience_replay_buffer_size), dtype=np.float32)
     action_buffer = np.zeros(experience_replay_buffer_size, dtype=np.uint8)
     reward_buffer = np.zeros(experience_replay_buffer_size, dtype=np.float32)
+    gameover_buffer = np.zeros(experience_replay_buffer_size, dtype=np.uint8)
+    
+    return screen_buffer, action_buffer, reward_buffer, gameover_buffer
 
-    return screen_buffer, action_buffer, reward_buffer
 
-
-def train_network(network, screen_buffer, action_buffer, reward_buffer):
-    pass
+def train_network(network, screen_buffer, action_index_buffer, reward_buffer, gameover_buffer, experience_replay_buffer_size, rng):
+    
+    batch_size = 32
+    discount_gamma = 0.99
+    lr_value = 0.00025
+    
+    for sample_no in range(batch_size):
+        
+        sample_point = rng.integers(experience_replay_buffer_size)
+        sample_point_m1 = (sample_point - 1) % experience_replay_buffer_size
+        sample_point_m2 = (sample_point - 2) % experience_replay_buffer_size
+        sample_point_m3 = (sample_point - 3) % experience_replay_buffer_size
+        sample_point_next = (sample_point + 1) % experience_replay_buffer_size
+        
+        if gameover_buffer[sample_point] == 1 or gameover_buffer[sample_point_next] == 1:
+            continue
+        
+        sample_state = np.dstack((screen_buffer[:,:,sample_point], screen_buffer[:,:,sample_point_m1], screen_buffer[:,:,sample_point_m2], screen_buffer[:,:,sample_point_m3]))
+        sample_state_tensor = torch.from_numpy(sample_state).cuda()
+        sample_state_tensor_permute = sample_state_tensor.permute(2, 0, 1)
+        q_sample_state = network(sample_state_tensor_permute[None, ...])
+        print(q_sample_state.size())
+        
+        sample_action_index = action_index_buffer[sample_point]
+        q_sample_action = q_sample_state[0, sample_action_index]
+        
+        sample_reward = reward_buffer[sample_point]
+        
+        sample_state_next = np.dstack((screen_buffer[:,:,sample_point_next], screen_buffer[:,:,sample_point], screen_buffer[:,:,sample_point_m1], screen_buffer[:,:,sample_point_m2]))
+        sample_state_next_tensor = torch.from_numpy(sample_state_next).cuda()
+        sample_state_next_tensor_permute = sample_state_next_tensor.permute(2, 0, 1)
+        q_max_sample_state_next = torch.max(network(sample_state_next_tensor_permute[None, ...]))
+        
+        y_act = q_sample_state
+        y_pred = sample_reward + discount_gamma * q_max_sample_state_next
+        
+        #TODO turn this into a 32-sample batch instead of 32 single batches
+        
+        loss = torch.nn.SmoothL1Loss(y_act, y_pred)
+        optimizer = torch.optim.Adam(network.parameters(), lr=lr_value)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
 
 def play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_width, screen_height, experience_replay_buffer_size, minimal_actions, rng):
     
     total_total_reward = 0.0
     
-    screen_buffer, action_buffer, reward_buffer = experience_replay_buffer_init(experience_replay_buffer_size)
+    screen_buffer, action_index_buffer, reward_buffer, gameover_buffer = experience_replay_buffer_init(experience_replay_buffer_size)
     
     no_of_sampled_buffer_points = 0
     
@@ -149,18 +191,18 @@ def play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_wid
             screen_preproc = preproc_screen(screen_vec)
             screen_mat[:,:,i_15_hz] = screen_preproc
             screen_4_frames_tensor_permute = update_state(screen_mat, i_15_hz)
-            action = act_eps_greedy(screen_4_frames_tensor_permute, eps_greedy_value, network, minimal_actions, rng)
+            action, action_index = act_eps_greedy(screen_4_frames_tensor_permute, eps_greedy_value, network, minimal_actions, rng)
             
             curr_buffer_index = no_of_sampled_buffer_points  % experience_replay_buffer_size
             prev_buffer_index = (no_of_sampled_buffer_points - 1)  % experience_replay_buffer_size
             
             screen_buffer[:,:,curr_buffer_index] = screen_preproc
-            action_buffer[curr_buffer_index] = action
+            action_index_buffer[curr_buffer_index] = action_index
             reward_buffer[prev_buffer_index] = reward
             
             if no_of_sampled_buffer_points >= experience_replay_buffer_size:
                 
-                train_network(network, screen_buffer, action_buffer, reward_buffer)
+                train_network(network, screen_buffer, action_index_buffer, reward_buffer, gameover_buffer, experience_replay_buffer_size, rng)
             
             total_reward += reward
             total_total_reward += reward
@@ -168,6 +210,7 @@ def play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_wid
             no_of_sampled_buffer_points += 1
             
             if(ale.game_over()):
+                gameover_buffer[curr_buffer_index] = 1
                 episode_frame_number = ale.getEpisodeFrameNumber()
                 frame_number = ale.getFrameNumber()
                 print("Frame Number: " + str(frame_number) + " Episode Frame Number: " + str(episode_frame_number))
@@ -219,7 +262,7 @@ def main():
     
     #cuda0 = torch.device('cuda:0')
     
-    n_episodes = 20
+    n_episodes = 1000
     
     experience_replay_buffer_size = 10000
     
