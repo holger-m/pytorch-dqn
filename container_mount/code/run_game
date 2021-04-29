@@ -125,7 +125,18 @@ def train_network(network, screen_buffer, action_index_buffer, reward_buffer, ga
     discount_gamma = 0.99
     lr_value = 0.00025
     
-    for sample_no in range(batch_size):
+    sample_state_batch = torch.zeros([batch_size, 4, 84, 84], dtype=torch.float32, device=torch.device('cuda:0'))
+    sample_state_next_batch = torch.zeros([batch_size, 4, 84, 84], dtype=torch.float32, device=torch.device('cuda:0'))
+    #y_act = torch.zeros(batch_size, dtype=torch.float32, device=torch.device('cuda:0'))
+    y_act_batch = torch.zeros(batch_size, dtype=torch.float32, device=torch.device('cuda:0'))
+    #y_pred = torch.zeros(batch_size, dtype=torch.float32, device=torch.device('cuda:0'))
+    y_pred_batch = torch.zeros(batch_size, dtype=torch.float32, device=torch.device('cuda:0'))
+    sample_action_index_batch = np.zeros(batch_size, dtype=np.uint8)
+    sample_reward_batch = np.zeros(batch_size, dtype=np.float32)
+    
+    batch_sample_no = 0
+    
+    while batch_sample_no < batch_size:
         
         sample_point = rng.integers(experience_replay_buffer_size)
         sample_point_m1 = (sample_point - 1) % experience_replay_buffer_size
@@ -139,32 +150,46 @@ def train_network(network, screen_buffer, action_index_buffer, reward_buffer, ga
         sample_state = np.dstack((screen_buffer[:,:,sample_point], screen_buffer[:,:,sample_point_m1], screen_buffer[:,:,sample_point_m2], screen_buffer[:,:,sample_point_m3]))
         sample_state_tensor = torch.from_numpy(sample_state).cuda()
         sample_state_tensor_permute = sample_state_tensor.permute(2, 0, 1)
-        q_sample_state = network(sample_state_tensor_permute[None, ...])
-        print(q_sample_state.size())
+        sample_state_batch[batch_sample_no,:,:,:] = sample_state_tensor_permute
+        #q_sample_state = network(sample_state_tensor_permute[None, ...])
         
         sample_action_index = action_index_buffer[sample_point]
-        q_sample_action = q_sample_state[0, sample_action_index]
+        sample_action_index_batch[batch_sample_no] = sample_action_index
+        #q_sample_action = q_sample_state[0, sample_action_index]
         
         sample_reward = reward_buffer[sample_point]
+        sample_reward_batch[batch_sample_no] = sample_reward
         
         sample_state_next = np.dstack((screen_buffer[:,:,sample_point_next], screen_buffer[:,:,sample_point], screen_buffer[:,:,sample_point_m1], screen_buffer[:,:,sample_point_m2]))
         sample_state_next_tensor = torch.from_numpy(sample_state_next).cuda()
         sample_state_next_tensor_permute = sample_state_next_tensor.permute(2, 0, 1)
-        q_max_sample_state_next = torch.max(network(sample_state_next_tensor_permute[None, ...]))
+        sample_state_next_batch[batch_sample_no,:,:,:] = sample_state_next_tensor_permute
+        #q_max_sample_state_next = torch.max(network(sample_state_next_tensor_permute[None, ...]))
         
-        y_act = q_sample_state
-        y_pred = sample_reward + discount_gamma * q_max_sample_state_next
+        #y_act[batch_sample_no] = q_sample_action
+        #y_pred[batch_sample_no] = sample_reward + discount_gamma * q_max_sample_state_next
         
-        #TODO turn this into a 32-sample batch instead of 32 single batches
-        
-        loss = torch.nn.SmoothL1Loss(y_act, y_pred)
-        optimizer = torch.optim.Adam(network.parameters(), lr=lr_value)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        batch_sample_no += 1
+    
+    q_sample_state_next_batch = network(sample_state_next_batch)
+    for batch_sample_no in range(batch_size):
+        y_pred_batch[batch_sample_no] = sample_reward_batch[batch_sample_no] + discount_gamma * torch.max(q_sample_state_next_batch[batch_sample_no,:])
+        #print('y_pred_batch: ' + str(y_pred_batch[batch_sample_no]) + '; y_pred ' + str(y_pred[batch_sample_no]))
+    
+    q_sample_state_batch = network(sample_state_batch)
+    for batch_sample_no in range(batch_size):
+        y_act_batch[batch_sample_no] = q_sample_state_batch[batch_sample_no, sample_action_index_batch[batch_sample_no]]
+        #print('y_act_batch: ' + str(y_act_batch[batch_sample_no]) + '; y_act ' + str(y_act[batch_sample_no]))
+    
+    loss_fn = torch.nn.SmoothL1Loss()
+    loss = loss_fn(y_act_batch, y_pred_batch)
+    optimizer = torch.optim.Adam(network.parameters(), lr=lr_value)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
 
 
-def play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_width, screen_height, experience_replay_buffer_size, minimal_actions, rng):
+def play_n_episodes(n_episodes, n_frames, max_frames_per_episode, ale, network, screen_width, screen_height, experience_replay_buffer_size, minimal_actions, rng):
     
     total_total_reward = 0.0
     
@@ -185,7 +210,7 @@ def play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_wid
         while True:
         
             eps_alpha = 4*no_of_sampled_buffer_points/1e6
-            eps_greedy_value = 1.0*(1.0 - eps_alpha) + 0.1*eps_alpha
+            eps_greedy_value = max(1.0*(1.0 - eps_alpha) + 0.1*eps_alpha, 0.1)
             
             screen_vec, reward = play_at_15hz(action, screen_height, screen_width, ale)
             screen_preproc = preproc_screen(screen_vec)
@@ -213,7 +238,8 @@ def play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_wid
                 gameover_buffer[curr_buffer_index] = 1
                 episode_frame_number = ale.getEpisodeFrameNumber()
                 frame_number = ale.getFrameNumber()
-                print("Frame Number: " + str(frame_number) + " Episode Frame Number: " + str(episode_frame_number))
+                print(" ")
+                print("Frame Number: " + str(frame_number) + "; Episode Frame Number: " + str(episode_frame_number))
                 print("Episode " + str(episode_no) + " ended with score: " + str(total_reward))
                 print("No. of sampled buffer points: " + str(no_of_sampled_buffer_points))
                 print("eps-greedy value: " + str(eps_greedy_value))
@@ -223,6 +249,9 @@ def play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_wid
         video_save_str = ('video_episode_' + str(episode_no) + '.npy')
         #with open(video_save_str, 'wb') as f:
         #    np.save(f, screen_mat)
+        
+        if ale.getFrameNumber() > n_frames:
+            break
 
 
 def main():
@@ -262,11 +291,13 @@ def main():
     
     #cuda0 = torch.device('cuda:0')
     
-    n_episodes = 1000
+    n_episodes = int(1e6)
     
-    experience_replay_buffer_size = 10000
+    n_frames = int(1e7)
     
-    play_n_episodes(n_episodes, max_frames_per_episode, ale, network, screen_width, screen_height, experience_replay_buffer_size, minimal_actions, rng)
+    experience_replay_buffer_size = 200000
+    
+    play_n_episodes(n_episodes, n_frames, max_frames_per_episode, ale, network, screen_width, screen_height, experience_replay_buffer_size, minimal_actions, rng)
     
 
 if __name__ == '__main__':
