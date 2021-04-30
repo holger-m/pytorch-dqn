@@ -106,16 +106,12 @@ class QAgentAutograd:
         self.learning_rate = learning_rate
         self.Q = torch.tensor([[0.5, 0.5], [0.5, 0.5]], requires_grad=True)
         self.reward_pred = self.Q[0,0]
-        self.screen = np.array([1, 0])
-        self.action = 0
     
     def __call__(self, screen):  # forward pass
         
-        self.screen = screen
         screen_tensor = torch.tensor(screen, dtype=torch.float32)
         q_vec = torch.matmul(self.Q, screen_tensor)
         action = self.get_response_from_q(q_vec)
-        self.action = action
         self.reward_pred = q_vec[action]
         return action
     
