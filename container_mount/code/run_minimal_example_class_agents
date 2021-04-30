@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""created 30.04.2021
+@author: holger mohr
+"""
+
+import numpy as np
+import torch
+from torch import nn
+
+
+class SimpleEnv:
+    
+    def __init__(self, rng):
+        
+        self.rng = rng
+        self.screen = np.array([1, 0])
+        self.frame_no = 0
+    
+    def __call__(self, action):
+        
+        if all(self.screen == np.array([1, 0])):
+            reward_vec = np.array([1, 0])
+        elif all(self.screen == np.array([0, 1])):
+            reward_vec = np.array([0, 2])
+        else:
+            raise Exception('Screen unknown!')
+        
+        reward = reward_vec[action]
+        
+        draw_screen = self.rng.integers(2)
+        
+        if draw_screen == 0:
+            screen = np.array([1, 0])
+        elif draw_screen == 1:
+            screen = np.array([0, 1])
+        else:
+            raise Exception('Wrong draw!')
+        
+        self.screen = screen
+        self.frame_no += 1
+        
+        return reward
+
+
+class QAgentManual:
+    
+    def __init__(self, rng, eps_rand, learning_rate):
+        
+        self.rng = rng
+        self.eps_rand = eps_rand
+        self.learning_rate = learning_rate
+        self.Q = torch.tensor([[0.5, 0.5], [0.5, 0.5]])
+        self.reward_pred = self.Q[0,0]
+        self.screen = np.array([1, 0])
+        self.action = 0
+    
+    def __call__(self, screen):  # forward pass
+        
+        self.screen = screen
+        screen_tensor = torch.tensor(screen, dtype=torch.float32)
+        q_vec = torch.matmul(self.Q, screen_tensor)
+        action = self.get_response_from_q(q_vec)
+        self.action = action
+        self.reward_pred = q_vec[action]
+        return action
+    
+    def get_response_from_q(self, q_vec):
+        
+        if self.rng.random() < self.eps_rand:
+            
+            action = self.rng.integers(2)
+            
+        else:
+            
+            if q_vec[0] == q_vec[1]:
+                action = self.rng.integers(2)
+            else:
+                action = torch.argmax(q_vec).numpy()
+        
+        self.eps_rand = max(self.eps_rand - 0.01, 0)
+        
+        return action
+    
+    def qlearning_manual(self, reward):
+        
+        reward_torch = torch.tensor(reward, dtype=torch.float32)
+        
+        if all(self.screen == np.array([1, 0])) and self.action == 0:
+            self.Q[0,0] -= self.learning_rate*(self.reward_pred - reward_torch)
+        elif all(self.screen == np.array([1, 0])) and self.action == 1:
+            self.Q[1,0] -= self.learning_rate*(self.reward_pred - reward_torch)
+        elif all(self.screen == np.array([0, 1])) and self.action == 0:
+            self.Q[0,1] -= self.learning_rate*(self.reward_pred - reward_torch)
+        elif all(self.screen == np.array([0, 1])) and self.action == 1:
+            self.Q[1,1] -= self.learning_rate*(self.reward_pred - reward_torch)
+
+
+class QAgentAutograd:
+    
+    def __init__(self, rng, eps_rand, learning_rate):
+        
+        self.rng = rng
+        self.eps_rand = eps_rand
+        self.learning_rate = learning_rate
+        self.Q = torch.tensor([[0.5, 0.5], [0.5, 0.5]], requires_grad=True)
+        self.reward_pred = self.Q[0,0]
+        self.screen = np.array([1, 0])
+        self.action = 0
+    
+    def __call__(self, screen):  # forward pass
+        
+        self.screen = screen
+        screen_tensor = torch.tensor(screen, dtype=torch.float32)
+        q_vec = torch.matmul(self.Q, screen_tensor)
+        action = self.get_response_from_q(q_vec)
+        self.action = action
+        self.reward_pred = q_vec[action]
+        return action
+    
+    def get_response_from_q(self, q_vec):
+        
+        if self.rng.random() < self.eps_rand:
+            
+            action = self.rng.integers(2)
+            
+        else:
+            
+            if q_vec[0] == q_vec[1]:
+                action = self.rng.integers(2)
+            else:
+                action = torch.argmax(q_vec).numpy()
+        
+        self.eps_rand = max(self.eps_rand - 0.01, 0)
+        
+        return action
+    
+    def qlearning_autograd(self, reward):
+        
+        reward_torch = torch.tensor(reward, dtype=torch.float32)
+        
+        loss = 0.5*(self.reward_pred - reward_torch).pow(2)
+        self.Q.grad = None
+        loss.backward()
+        with torch.no_grad():
+            self.Q -= self.learning_rate*self.Q.grad
+
+
+def main():
+    
+    rng_manual = np.random.default_rng(1)
+    rng_autograd = np.random.default_rng(1)
+    
+    env_manual = SimpleEnv(rng_manual)
+    env_autograd = SimpleEnv(rng_autograd)
+    
+    frame_no_manual = env_manual.frame_no
+    frame_no_autograd = env_manual.frame_no
+    
+    n_frames = 100
+    eps_rand = 1.0
+    learning_rate = 0.1
+    action_manual = 0
+    action_autograd = 0
+    
+    q_agent_manual = QAgentManual(rng_manual, eps_rand, learning_rate)    
+    q_agent_autograd = QAgentAutograd(rng_autograd, eps_rand, learning_rate)
+    
+    while frame_no_manual < n_frames:
+        
+        frame_no_manual = env_manual.frame_no
+        screen_old_manual = env_manual.screen
+        reward_manual = env_manual(action_manual)
+        
+        print(' ')
+        print('QAgentManual:')
+        print('frame no: ' + str(frame_no_manual))
+        print('eps_rand: ' + str(q_agent_manual.eps_rand))
+        print('screen: ' + str(screen_old_manual))
+        print('action: ' + str(action_manual))
+        print('reward: ' + str(reward_manual))
+        
+        frame_no_autograd = env_autograd.frame_no
+        screen_old_autograd = env_autograd.screen
+        reward_autograd = env_autograd(action_manual)
+        
+        print(' ')
+        print('QAgentAutograd:')
+        print('frame no: ' + str(frame_no_autograd))
+        print('eps_rand: ' + str(q_agent_autograd.eps_rand))
+        print('screen: ' + str(screen_old_autograd))
+        print('action: ' + str(action_autograd))
+        print('reward: ' + str(reward_autograd))
+        
+        
+        """ learning """
+        
+        print('Q:')
+        print(q_agent_manual.Q)
+        print('Q_with_grad:')
+        print(q_agent_autograd.Q)
+        print('Q_with_grad.grad:')
+        print(q_agent_autograd.Q.grad)
+        
+        q_agent_manual.qlearning_manual(reward_manual)
+        q_agent_autograd.qlearning_autograd(reward_autograd)
+        
+        """ forward pass """
+        
+        screen_new_manual = env_manual.screen
+        screen_new_autograd = env_autograd.screen
+        
+        action_manual = q_agent_manual(screen_new_manual)
+        action_autograd = q_agent_autograd(screen_new_autograd)
+        
+        print('reward_pred with grad:')
+        print(q_agent_autograd.reward_pred)
+        
+        frame_no_manual = env_manual.frame_no
+
+
+if __name__ == '__main__':
+    main()

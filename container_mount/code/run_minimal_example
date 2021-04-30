@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""created 30.04.2021
+@author: holger mohr
+"""
+
+import numpy as np
+import torch
+from torch import nn
+
+
+class SimpleEnv:
+    
+    def __init__(self, rng):
+        
+        self.rng = rng
+        self.screen = np.array([1, 0])
+        self.frame_no = 0
+    
+    def __call__(self, action):
+        
+        if all(self.screen == np.array([1, 0])):
+            reward_vec = np.array([1, 0])
+        elif all(self.screen == np.array([0, 1])):
+            reward_vec = np.array([0, 2])
+        else:
+            raise Exception('Screen unknown!')
+        
+        reward = reward_vec[action]
+        
+        draw_screen = self.rng.integers(2)
+        
+        if draw_screen == 0:
+            screen = np.array([1, 0])
+        elif draw_screen == 1:
+            screen = np.array([0, 1])
+        else:
+            raise Exception('Wrong draw!')
+        
+        self.screen = screen
+        self.frame_no += 1
+        
+        return reward
+
+
+def get_response_from_q(q_vec, rng, eps_rand):
+    
+    if rng.random() < eps_rand:
+        
+        action = rng.integers(2)
+        
+    else:
+        
+        if q_vec[0] == q_vec[1]:
+            action = rng.integers(2)
+        else:
+            action = torch.argmax(q_vec).numpy()
+    
+    eps_rand = max(eps_rand - 0.01, 0)
+    
+    return action, eps_rand
+
+def main():
+    
+    rng = np.random.default_rng(1)
+    
+    env = SimpleEnv(rng)
+    frame_no = env.frame_no
+    
+    n_frames = 100
+    
+    eps_rand = 1.0
+    
+    action = 0
+    
+    Q = torch.tensor([[0.5, 0.5], [0.5, 0.5]])
+    print(Q.size())
+    
+    Q_with_grad = torch.tensor([[0.5, 0.5], [0.5, 0.5]], requires_grad=True)
+    
+    learning_rate = 0.1
+    reward_pred = Q[0,0]
+    reward_pred_with_grad = Q_with_grad[0,0]
+    
+    while frame_no < n_frames:
+        
+        frame_no = env.frame_no
+        screen_old = env.screen
+        reward = env(action)
+        
+        print(' ')
+        print('frame no: ' + str(frame_no))
+        print('eps_rand: ' + str(eps_rand))
+        print('screen: ' + str(screen_old))
+        print('action: ' + str(action))
+        print('reward: ' + str(reward))
+        
+        """ learning """
+        
+        print('Q:')
+        print(Q)
+        print('Q_with_grad:')
+        print(Q_with_grad)
+        print('Q_with_grad.grad:')
+        print(Q_with_grad.grad)
+        
+        reward_torch = torch.tensor(reward, dtype=torch.float32)
+        
+        loss_with_grad = 0.5*(reward_torch - reward_pred_with_grad).pow(2)
+        
+        Q_with_grad.grad = None
+        
+        loss_with_grad.backward()
+        
+        with torch.no_grad():
+            
+            Q_with_grad -= learning_rate*Q_with_grad.grad
+            
+        
+        # q-learning:
+        if all(screen_old == np.array([1, 0])) and action == 0:
+            
+            Q[0,0] = Q[0,0] + learning_rate*(reward_torch - reward_pred)
+            
+        elif all(screen_old == np.array([1, 0])) and action == 1:
+            
+            Q[1,0] = Q[1,0] + learning_rate*(reward_torch - reward_pred)
+            
+        elif all(screen_old == np.array([0, 1])) and action == 0:
+            
+            Q[0,1] = Q[0,1] + learning_rate*(reward_torch - reward_pred)
+            
+        elif all(screen_old == np.array([0, 1])) and action == 1:
+            
+            Q[1,1] = Q[1,1] + learning_rate*(reward_torch - reward_pred)
+            
+        else:
+            raise Exception('Something went horribly wrong!')
+        
+        
+        """ forward pass """
+        
+        screen_new = env.screen
+        
+        screen_tensor = torch.tensor(screen_new, dtype=torch.float32)
+        
+        q_vec = torch.matmul(Q, screen_tensor)
+        q_vec_with_grad = torch.matmul(Q_with_grad, screen_tensor)
+        
+        print('q_vec:')
+        print(q_vec)
+        
+        action, eps_rand = get_response_from_q(q_vec, rng, eps_rand)
+        
+        reward_pred = q_vec[action]
+        reward_pred_with_grad = q_vec_with_grad[action]
+        
+        print('reward_pred:')
+        print(reward_pred)
+        
+        #action = rng.integers(2)
+        
+        frame_no = env.frame_no
+
+
+if __name__ == '__main__':
+    main()
