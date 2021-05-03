@@ -24,8 +24,6 @@ class SimpleEnv:
             reward_vec = np.array([1, 0])
         elif all(self.screen == np.array([0, 1])):
             reward_vec = np.array([0, 2])
-        else:
-            raise Exception('Screen unknown!')
         
         reward = reward_vec[action]
         
@@ -35,8 +33,6 @@ class SimpleEnv:
             screen = np.array([1, 0])
         elif draw_screen == 1:
             screen = np.array([0, 1])
-        else:
-            raise Exception('Wrong draw!')
         
         self.screen = screen
         self.frame_no += 1
@@ -143,31 +139,141 @@ class QAgentAutograd:
             self.Q -= self.learning_rate*self.Q.grad
 
 
+class QAgentNN:
+    
+    def __init__(self, rng, eps_rand, learning_rate):
+        
+        self.rng = rng
+        self.eps_rand = eps_rand
+        self.learning_rate = learning_rate
+        self.QNN = torch.nn.Sequential(torch.nn.Linear(2, 2, bias=False))
+        nn.init.constant_(self.QNN[0].weight, 0.5)
+        self.reward_pred = self.QNN[0].weight[0,0]
+        self.loss_fn = torch.nn.MSELoss()
+    
+    def __call__(self, screen):  # forward pass
+        
+        screen_tensor = torch.tensor(screen, dtype=torch.float32)
+        q_vec = self.QNN(screen_tensor)
+        action = self.get_response_from_q(q_vec)
+        self.reward_pred = q_vec[action]
+        return action
+    
+    def get_response_from_q(self, q_vec):
+        
+        if self.rng.random() < self.eps_rand:
+            
+            action = self.rng.integers(2)
+            
+        else:
+            
+            if q_vec[0] == q_vec[1]:
+                action = self.rng.integers(2)
+            else:
+                action = torch.argmax(q_vec).numpy()
+        
+        self.eps_rand = max(self.eps_rand - 0.01, 0)
+        
+        return action
+    
+    def qlearning_nn(self, reward):
+        
+        reward_torch = torch.tensor(reward, dtype=torch.float32)
+        
+        loss = 0.5*self.loss_fn(self.reward_pred, reward_torch)
+        self.QNN.zero_grad()
+        loss.backward()
+        with torch.no_grad():
+            self.QNN[0].weight -= self.learning_rate*self.QNN[0].weight.grad
+
+
+class QAgentOptim:
+    
+    def __init__(self, rng, eps_rand, learning_rate):
+        
+        self.rng = rng
+        self.eps_rand = eps_rand
+        self.learning_rate = learning_rate
+        self.QNN = torch.nn.Sequential(torch.nn.Linear(2, 2, bias=False))
+        nn.init.constant_(self.QNN[0].weight, 0.5)
+        self.reward_pred = self.QNN[0].weight[0,0]
+        self.loss_fn = torch.nn.MSELoss()
+        self.optimizer = torch.optim.SGD(self.QNN.parameters(), lr=self.learning_rate)
+    
+    def __call__(self, screen):  # forward pass
+        
+        screen_tensor = torch.tensor(screen, dtype=torch.float32)
+        q_vec = self.QNN(screen_tensor)
+        action = self.get_response_from_q(q_vec)
+        self.reward_pred = q_vec[action]
+        return action
+    
+    def get_response_from_q(self, q_vec):
+        
+        if self.rng.random() < self.eps_rand:
+            
+            action = self.rng.integers(2)
+            
+        else:
+            
+            if q_vec[0] == q_vec[1]:
+                action = self.rng.integers(2)
+            else:
+                action = torch.argmax(q_vec).numpy()
+        
+        self.eps_rand = max(self.eps_rand - 0.01, 0)
+        
+        return action
+    
+    def qlearning_optim(self, reward):
+        
+        reward_torch = torch.tensor(reward, dtype=torch.float32)
+        
+        loss = 0.5*self.loss_fn(self.reward_pred, reward_torch)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+
 def main():
     
     rng_manual = np.random.default_rng(1)
     rng_autograd = np.random.default_rng(1)
+    rng_nn = np.random.default_rng(1)
+    rng_optim = np.random.default_rng(1)
     
     env_manual = SimpleEnv(rng_manual)
     env_autograd = SimpleEnv(rng_autograd)
+    env_nn = SimpleEnv(rng_nn)
+    env_optim = SimpleEnv(rng_optim)
     
     frame_no_manual = env_manual.frame_no
-    frame_no_autograd = env_manual.frame_no
+    frame_no_autograd = env_autograd.frame_no
+    frame_no_nn = env_nn.frame_no
+    frame_no_optim = env_optim.frame_no
     
     n_frames = 100
     eps_rand = 1.0
     learning_rate = 0.1
+    
     action_manual = 0
     action_autograd = 0
+    action_nn = 0
+    action_optim = 0
     
-    q_agent_manual = QAgentManual(rng_manual, eps_rand, learning_rate)    
+    q_agent_manual = QAgentManual(rng_manual, eps_rand, learning_rate)
     q_agent_autograd = QAgentAutograd(rng_autograd, eps_rand, learning_rate)
+    q_agent_nn = QAgentNN(rng_nn, eps_rand, learning_rate)
+    q_agent_optim = QAgentOptim(rng_optim, eps_rand, learning_rate)
     
     while frame_no_manual < n_frames:
         
         frame_no_manual = env_manual.frame_no
         screen_old_manual = env_manual.screen
         reward_manual = env_manual(action_manual)
+        
+        print(' ')
+        print('************************************')
         
         print(' ')
         print('QAgentManual:')
@@ -179,7 +285,7 @@ def main():
         
         frame_no_autograd = env_autograd.frame_no
         screen_old_autograd = env_autograd.screen
-        reward_autograd = env_autograd(action_manual)
+        reward_autograd = env_autograd(action_autograd)
         
         print(' ')
         print('QAgentAutograd:')
@@ -189,29 +295,69 @@ def main():
         print('action: ' + str(action_autograd))
         print('reward: ' + str(reward_autograd))
         
+        frame_no_nn = env_nn.frame_no
+        screen_old_nn = env_nn.screen
+        reward_nn = env_nn(action_nn)
+        
+        print(' ')
+        print('QAgentNN:')
+        print('frame no: ' + str(frame_no_nn))
+        print('eps_rand: ' + str(q_agent_nn.eps_rand))
+        print('screen: ' + str(screen_old_nn))
+        print('action: ' + str(action_nn))
+        print('reward: ' + str(reward_nn))
+        
+        frame_no_optim = env_optim.frame_no
+        screen_old_optim = env_optim.screen
+        reward_optim = env_optim(action_optim)
+        
+        print(' ')
+        print('QAgentOptim:')
+        print('frame no: ' + str(frame_no_optim))
+        print('eps_rand: ' + str(q_agent_optim.eps_rand))
+        print('screen: ' + str(screen_old_optim))
+        print('action: ' + str(action_optim))
+        print('reward: ' + str(reward_optim))
+        
         
         """ learning """
         
+        print(' ')
         print('Q:')
         print(q_agent_manual.Q)
+        print(' ')
         print('Q_with_grad:')
         print(q_agent_autograd.Q)
         print('Q_with_grad.grad:')
         print(q_agent_autograd.Q.grad)
+        print(' ')
+        print('QNN:')
+        print(q_agent_nn.QNN[0].weight)
+        print('QNN grad:')
+        print(q_agent_nn.QNN[0].weight.grad)
+        print(' ')
+        print('QNN optim:')
+        print(q_agent_optim.QNN[0].weight)
+        print('QNN optim grad:')
+        print(q_agent_optim.QNN[0].weight.grad)
+        print(' ')
         
         q_agent_manual.qlearning_manual(reward_manual)
         q_agent_autograd.qlearning_autograd(reward_autograd)
+        q_agent_nn.qlearning_nn(reward_nn)
+        q_agent_optim.qlearning_optim(reward_optim)
         
         """ forward pass """
         
         screen_new_manual = env_manual.screen
         screen_new_autograd = env_autograd.screen
+        screen_new_nn = env_nn.screen
+        screen_new_optim = env_optim.screen
         
         action_manual = q_agent_manual(screen_new_manual)
         action_autograd = q_agent_autograd(screen_new_autograd)
-        
-        print('reward_pred with grad:')
-        print(q_agent_autograd.reward_pred)
+        action_nn = q_agent_nn(screen_new_nn)
+        action_optim = q_agent_optim(screen_new_optim)
         
         frame_no_manual = env_manual.frame_no
 
