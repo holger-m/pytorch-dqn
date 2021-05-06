@@ -12,45 +12,7 @@ import torch
 from torch import nn
 
 
-def play_at_15hz(action, screen_height, screen_width, ale):
-    
-    screen_vec_1 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
-    screen_vec_2 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
-    
-    reward_sum = 0
-    
-    reward = ale.act(action)
-    reward_sum = reward_sum + reward
-    
-    reward = ale.act(action)
-    reward_sum = reward_sum + reward
-    
-    reward = ale.act(action)
-    reward_sum = reward_sum + reward
-    ale.getScreenRGB(screen_vec_1)
-    
-    reward = ale.act(action)
-    reward_sum = reward_sum + reward
-    ale.getScreenRGB(screen_vec_2)
-    
-    screen_R_max = np.amax(np.dstack((screen_vec_1[:,:,0], screen_vec_2[:,:,0])), axis=2)
-    screen_G_max = np.amax(np.dstack((screen_vec_1[:,:,1], screen_vec_2[:,:,1])), axis=2)
-    screen_B_max = np.amax(np.dstack((screen_vec_1[:,:,2], screen_vec_2[:,:,2])), axis=2)
-    
-    screen_max = np.dstack((screen_R_max, screen_G_max, screen_B_max))
-    
-    return screen_max, reward_sum
 
-
-def preproc_screen(screen_np_in):
-    
-    screen_image = Image.fromarray(screen_np_in, 'RGB')
-    screen_ycbcr = screen_image.convert('YCbCr')
-    screen_y = screen_ycbcr.getchannel(0)
-    screen_y_84x84 = screen_y.resize((84, 84), resample=Image.BILINEAR)
-    screen_y_84x84_float_rescaled_np = np.array(screen_y_84x84, dtype=np.float32)/255.0
-    
-    return screen_y_84x84_float_rescaled_np
 
 
 def nn_init():
@@ -97,16 +59,6 @@ def update_state(screen_mat, frame_no):
     return state_tensor_permute
 
 
-def act_eps_greedy(state, eps_param, network, minimal_actions, rng):
-    
-    if np.random.rand() < eps_param:
-        action_index = rng.integers(len(minimal_actions))  # 0, 1, ..., no_of_act-1
-    else:        
-        action_index = torch.argmax(network(state[None, ...])).cpu().numpy()
-    
-    action = minimal_actions[action_index]
-    
-    return action, action_index
 
 
 def experience_replay_buffer_init(experience_replay_buffer_size):
@@ -253,6 +205,126 @@ def play_n_episodes(n_episodes, n_frames, max_frames_per_episode, ale, network, 
         if ale.getFrameNumber() > n_frames:
             break
 
+def ale_init(rng):
+    
+    max_frames_per_episode = 50000
+    
+    ale = ALEInterface()
+    ale.loadROM(str.encode('/workspace/container_mount/roms/space_invaders.bin'))
+    ale.setInt(b'max_num_frames_per_episode', max_frames_per_episode)
+    minimal_actions = ale.getMinimalActionSet()
+    (screen_width,screen_height) = ale.getScreenDims()
+    ale_seed = rng.integers(2^32)
+    ale.setInt(b'random_seed',ale_seed)
+    random_seed = ale.getInt(b'random_seed')
+    
+    print("width/height: " +str(screen_width) + "/" + str(screen_height))
+    print('max frames per episode: ' + str(max_frames_per_episode))
+    print('minimal actions: ' + minimal_actions)
+    print("random_seed: " + str(random_seed))
+    
+    return ale
+
+def ale_15hz(ale, action):
+    
+    (screen_width,screen_height) = ale.getScreenDims()
+    
+    screen_vec_1 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+    screen_vec_2 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+    
+    reward_sum = 0
+    
+    reward = ale.act(action)
+    reward_sum += reward
+    
+    reward = ale.act(action)
+    reward_sum += reward
+    
+    reward = ale.act(action)
+    reward_sum += reward
+    ale.getScreenRGB(screen_vec_1)
+    
+    reward = ale.act(action)
+    reward_sum += reward
+    ale.getScreenRGB(screen_vec_2)
+    
+    screen_R_max = np.amax(np.dstack((screen_vec_1[:,:,0], screen_vec_2[:,:,0])), axis=2)
+    screen_G_max = np.amax(np.dstack((screen_vec_1[:,:,1], screen_vec_2[:,:,1])), axis=2)
+    screen_B_max = np.amax(np.dstack((screen_vec_1[:,:,2], screen_vec_2[:,:,2])), axis=2)
+    
+    screen_max = np.dstack((screen_R_max, screen_G_max, screen_B_max))
+    
+    return screen_max, reward_sum
+
+
+def preproc_screen(screen_np_in):
+    
+    screen_image = Image.fromarray(screen_np_in, 'RGB')
+    screen_ycbcr = screen_image.convert('YCbCr')
+    screen_y = screen_ycbcr.getchannel(0)
+    screen_y_84x84 = screen_y.resize((84, 84), resample=Image.BILINEAR)
+    screen_y_84x84_float_rescaled_np = np.array(screen_y_84x84, dtype=np.float32)/255.0
+    
+    return screen_y_84x84_float_rescaled_np
+
+
+class DqnAgent():
+    
+    def __init__(self):
+    
+        self.eps_param = 1.0
+        self.state = tensor 4x1x84x84 auf cuda
+        
+    def __call__(self, screen, reward):
+    
+        self.act_eps_greedy
+        self.train_network
+    
+    def act_eps_greedy(self, state, eps_param, network, minimal_actions, rng):
+        
+        if np.random.rand() < eps_param:
+            action_index = rng.integers(len(minimal_actions))  # 0, 1, ..., no_of_act-1
+        else:        
+            action_index = torch.argmax(network(state[None, ...])).cpu().numpy()
+        
+        action = minimal_actions[action_index]
+        
+        return action, action_index
+
+def main():
+    
+    rng = np.random.default_rng()
+    
+    ale = ale_init(rng)
+    
+    n_frames = int(1e7)
+    
+    episode_no = 0
+    
+    while ale.getFrameNumber() < n_frames:
+        
+        ale.reset_game()
+        episode_no += 1
+        total_reward = 0.0
+        action = 0
+        
+        while not ale.game_over()
+            
+            screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
+            screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
+            action = DqnAgent(screen_preproc_15hz, reward_15hz)
+            
+            total_reward += reward
+            
+            if ale.game_over():
+                
+                episode_frame_number = ale.getEpisodeFrameNumber()
+                frame_number = ale.getFrameNumber()
+                print(" ")
+                print("Frame Number: " + str(frame_number) + "; Episode Frame Number: " + str(episode_frame_number))
+                print("Episode " + str(episode_no) + " ended with score: " + str(total_reward))
+                print("eps-greedy value: " + str(DqnAgent.eps_greedy_value))
+    
 
 def main():
     
