@@ -12,74 +12,26 @@ import torch
 from torch import nn
 
 
-def train_network(network, screen_buffer, action_index_buffer, reward_buffer, gameover_buffer, experience_replay_buffer_size, rng):
+class DqnNN(nn.Module):
     
-    batch_size = 32
-    discount_gamma = 0.99
-    lr_value = 0.00025
+    def __init__(self):
+        super(DqnNN, self).__init__()
+        
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(3136, 512),
+            nn.ReLU(),
+            nn.Linear(512, 6))
     
-    sample_state_batch = torch.zeros([batch_size, 4, 84, 84], dtype=torch.float32, device=torch.device('cuda:0'))
-    sample_state_next_batch = torch.zeros([batch_size, 4, 84, 84], dtype=torch.float32, device=torch.device('cuda:0'))
-    #y_act = torch.zeros(batch_size, dtype=torch.float32, device=torch.device('cuda:0'))
-    y_act_batch = torch.zeros(batch_size, dtype=torch.float32, device=torch.device('cuda:0'))
-    #y_pred = torch.zeros(batch_size, dtype=torch.float32, device=torch.device('cuda:0'))
-    y_pred_batch = torch.zeros(batch_size, dtype=torch.float32, device=torch.device('cuda:0'))
-    sample_action_index_batch = np.zeros(batch_size, dtype=np.uint8)
-    sample_reward_batch = np.zeros(batch_size, dtype=np.float32)
-    
-    batch_sample_no = 0
-    
-    while batch_sample_no < batch_size:
-        
-        sample_point = rng.integers(experience_replay_buffer_size)
-        sample_point_m1 = (sample_point - 1) % experience_replay_buffer_size
-        sample_point_m2 = (sample_point - 2) % experience_replay_buffer_size
-        sample_point_m3 = (sample_point - 3) % experience_replay_buffer_size
-        sample_point_next = (sample_point + 1) % experience_replay_buffer_size
-        
-        if gameover_buffer[sample_point] == 1 or gameover_buffer[sample_point_next] == 1:
-            continue
-        
-        sample_state = np.dstack((screen_buffer[:,:,sample_point], screen_buffer[:,:,sample_point_m1], screen_buffer[:,:,sample_point_m2], screen_buffer[:,:,sample_point_m3]))
-        sample_state_tensor = torch.from_numpy(sample_state).cuda()
-        sample_state_tensor_permute = sample_state_tensor.permute(2, 0, 1)
-        sample_state_batch[batch_sample_no,:,:,:] = sample_state_tensor_permute
-        #q_sample_state = network(sample_state_tensor_permute[None, ...])
-        
-        sample_action_index = action_index_buffer[sample_point]
-        sample_action_index_batch[batch_sample_no] = sample_action_index
-        #q_sample_action = q_sample_state[0, sample_action_index]
-        
-        sample_reward = reward_buffer[sample_point]
-        sample_reward_batch[batch_sample_no] = sample_reward
-        
-        sample_state_next = np.dstack((screen_buffer[:,:,sample_point_next], screen_buffer[:,:,sample_point], screen_buffer[:,:,sample_point_m1], screen_buffer[:,:,sample_point_m2]))
-        sample_state_next_tensor = torch.from_numpy(sample_state_next).cuda()
-        sample_state_next_tensor_permute = sample_state_next_tensor.permute(2, 0, 1)
-        sample_state_next_batch[batch_sample_no,:,:,:] = sample_state_next_tensor_permute
-        #q_max_sample_state_next = torch.max(network(sample_state_next_tensor_permute[None, ...]))
-        
-        #y_act[batch_sample_no] = q_sample_action
-        #y_pred[batch_sample_no] = sample_reward + discount_gamma * q_max_sample_state_next
-        
-        batch_sample_no += 1
-    
-    q_sample_state_next_batch = network(sample_state_next_batch)
-    for batch_sample_no in range(batch_size):
-        y_pred_batch[batch_sample_no] = sample_reward_batch[batch_sample_no] + discount_gamma * torch.max(q_sample_state_next_batch[batch_sample_no,:])
-        #print('y_pred_batch: ' + str(y_pred_batch[batch_sample_no]) + '; y_pred ' + str(y_pred[batch_sample_no]))
-    
-    q_sample_state_batch = network(sample_state_batch)
-    for batch_sample_no in range(batch_size):
-        y_act_batch[batch_sample_no] = q_sample_state_batch[batch_sample_no, sample_action_index_batch[batch_sample_no]]
-        #print('y_act_batch: ' + str(y_act_batch[batch_sample_no]) + '; y_act ' + str(y_act[batch_sample_no]))
-    
-    loss_fn = torch.nn.SmoothL1Loss()
-    loss = loss_fn(y_act_batch, y_pred_batch)
-    optimizer = torch.optim.Adam(network.parameters(), lr=lr_value)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+    def forward(self, x):
+        conv_out = self.conv(x)
+        return conv_out
 
 
 def ale_init(rng):
@@ -97,7 +49,7 @@ def ale_init(rng):
     
     print("width/height: " +str(screen_width) + "/" + str(screen_height))
     print('max frames per episode: ' + str(max_frames_per_episode))
-    print('minimal actions: ' + minimal_actions)
+    print('minimal actions: ' + str(minimal_actions))
     print("random_seed: " + str(random_seed))
     
     return ale
@@ -160,8 +112,10 @@ class DqnAgent():
         self.action_count = 0.0
         self.network = DqnNN().to("cuda")
         self.batch_size = 32
-        self.discount_gamma = 0.99
+        self.discount_gamma = torch.tensor(0.99)
         self.lr_value = 0.00025
+        self.loss_fn = torch.nn.SmoothL1Loss()
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.lr_value)
     
     
     def __call__(self, screen, reward):
@@ -178,13 +132,16 @@ class DqnAgent():
     
     def update_state(self, screen):
     
-        state_new = np.concatenate(np.expand_dims(screen, axis=0), self.state[0, :,:], self.state[1, :,:], self.state[2, :,:]))
+        state_new = np.concatenate((np.expand_dims(screen, axis=0), self.state[0:3, :,:]))
         
         return state_new
     
     def update_experience_replay_buffer(self, state_new, reward):
         
-        self.experience_replay_buffer[self.experience_replay_buffer_circle_ind] = (self.state, state_new, self.action_ind, reward)
+        if len(self.experience_replay_buffer) < self.experience_replay_buffer_size:
+            self.experience_replay_buffer.append((self.state, state_new, self.action_ind, reward))
+        else:
+            self.experience_replay_buffer[self.experience_replay_buffer_circle_ind] = (self.state, state_new, self.action_ind, reward)
         self.experience_replay_buffer_circle_ind = (self.experience_replay_buffer_circle_ind + 1) % self.experience_replay_buffer_size
     
     def act_eps_greedy(self, state_new):
@@ -197,18 +154,18 @@ class DqnAgent():
                 net_out = self.network(state_tensor)
             action_index = torch.argmax(net_out).cpu().numpy()
         
-        action = minimal_actions[action_index]
+        action = self.minimal_actions[action_index]
         
         self.eps_param = max(1.0*(1.0 - self.action_count/1e6) + 0.1*self.action_count/1e6, 0.1)
         self.action_count += 1.0
         
         return action, action_index
     
-    def sample_batch():
+    def sample_batch(self):
         
         state_batch_np = np.empty((self.batch_size, 4, 84, 84), dtype=np.float32)
         state_next_batch_np = np.empty((self.batch_size, 4, 84, 84), dtype=np.float32)
-        action_ind_batch_np = np.empty(self.batch_size, dtype=np.uint8)
+        action_ind_batch_np = np.empty(self.batch_size, dtype=np.int64)
         reward_batch_np = np.empty(self.batch_size, dtype=np.float32)
         
         for sample_no in range(self.batch_size):
@@ -231,31 +188,17 @@ class DqnAgent():
         
         with torch.no_grad():
             net_out_state_next = self.network(state_next_batch_tensor)
+            action_ind_max = torch.argmax(net_out_state_next, axis=1)
+            q_next_max = net_out_state_next[np.arange(self.batch_size), action_ind_max]
+            q_pred = torch.from_numpy(reward_batch_np).cuda() + self.discount_gamma * q_next_max
         
         net_out_state = self.network(state_batch_tensor)
+        q_actual = net_out_state[np.arange(self.batch_size), action_ind_batch_np]
         
-        #TODO which size has net_out_state? Calculate prediction error... 
-    
-    class DqnNN(nn.Module):
-        
-        def __init__(self):
-            super(DqnNN, self).__init__()
-            
-            self.conv = nn.Sequential(
-                nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
-                nn.ReLU(),
-                nn.Flatten(),
-                nn.Linear(3136, 512),
-                nn.ReLU(),
-                nn.Linear(512, 6))
-        
-        def forward(self, x):
-            conv_out = self.conv(x)
-            return conv_out
+        loss = self.loss_fn(q_actual, q_pred)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
 
 def main():
@@ -280,13 +223,13 @@ def main():
         total_reward = 0.0
         action = 0
         
-        while not ale.game_over()
+        while not ale.game_over():
             
             screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
             screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
-            action = dqn_agent(rng, screen_preproc_15hz, reward_15hz)
+            action = dqn_agent(screen_preproc_15hz, reward_15hz)
             
-            total_reward += reward
+            total_reward += reward_15hz
             
             if ale.game_over():
                 
@@ -295,7 +238,7 @@ def main():
                 print(" ")
                 print("Frame Number: " + str(frame_number) + "; Episode Frame Number: " + str(episode_frame_number))
                 print("Episode " + str(episode_no) + " ended with score: " + str(total_reward))
-                print("eps-greedy value: " + str(DqnAgent.eps_greedy_value))
+                print("eps-greedy value: " + str(dqn_agent.eps_param))
 
 
 if __name__ == '__main__':
