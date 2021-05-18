@@ -187,8 +187,6 @@ class DqnAgent():
         
         if int(self.action_count) % self.network_target_update_freq == 0:
             self.network_target.load_state_dict(self.network.state_dict())
-            print(' ')
-            print('Target network has been updated!')
         
         state_batch_np, state_next_batch_np, action_ind_batch_np, reward_batch_np = self.sample_batch()
         
