@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""created 14.04.2021
+@author: holger mohr
+"""
+
+from ale_python_interface import ALEInterface
+import numpy as np
+from PIL import Image
+import torch
+from torch import nn
+
+
+class DqnNN(nn.Module):
+    
+    def __init__(self):
+        super(DqnNN, self).__init__()
+        
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(3136, 512),
+            nn.ReLU(),
+            nn.Linear(512, 6))
+    
+    def forward(self, x):
+        conv_out = self.conv(x)
+        return conv_out
+
+
+def ale_init(rng):
+    
+    max_frames_per_episode = 50000
+    
+    ale = ALEInterface()
+    ale.loadROM(str.encode('/workspace/container_mount/roms/space_invaders.bin'))
+    ale.setInt(b'max_num_frames_per_episode', max_frames_per_episode)
+    minimal_actions = ale.getMinimalActionSet()
+    (screen_width,screen_height) = ale.getScreenDims()
+    ale_seed = rng.integers(2^32)
+    ale.setInt(b'random_seed',ale_seed)
+    random_seed = ale.getInt(b'random_seed')
+    
+    print('width/height: ' +str(screen_width) + '/' + str(screen_height))
+    print('max frames per episode: ' + str(max_frames_per_episode))
+    print('minimal actions: ' + str(minimal_actions))
+    print('random_seed: ' + str(random_seed))
+    
+    return ale
+
+def ale_15hz(ale, action):
+    
+    (screen_width,screen_height) = ale.getScreenDims()
+    
+    screen_vec_1 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+    screen_vec_2 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+    
+    reward_sum = 0
+    
+    reward = ale.act(action)
+    reward_sum += reward
+    
+    reward = ale.act(action)
+    reward_sum += reward
+    
+    reward = ale.act(action)
+    reward_sum += reward
+    ale.getScreenRGB(screen_vec_1)
+    
+    reward = ale.act(action)
+    reward_sum += reward
+    ale.getScreenRGB(screen_vec_2)
+    
+    screen_R_max = np.amax(np.dstack((screen_vec_1[:,:,0], screen_vec_2[:,:,0])), axis=2)
+    screen_G_max = np.amax(np.dstack((screen_vec_1[:,:,1], screen_vec_2[:,:,1])), axis=2)
+    screen_B_max = np.amax(np.dstack((screen_vec_1[:,:,2], screen_vec_2[:,:,2])), axis=2)
+    
+    screen_max = np.dstack((screen_R_max, screen_G_max, screen_B_max))
+    
+    return screen_max, reward_sum
+
+
+def preproc_screen(screen_np_in):
+    
+    screen_image = Image.fromarray(screen_np_in, 'RGB')
+    screen_ycbcr = screen_image.convert('YCbCr')
+    screen_y = screen_ycbcr.getchannel(0)
+    screen_y_84x84 = screen_y.resize((84, 84), resample=Image.BILINEAR)
+    screen_y_84x84_float_rescaled_np = np.array(screen_y_84x84, dtype=np.float32)/255.0
+    
+    return screen_y_84x84_float_rescaled_np
+
+
+class DqnAgent():
+    
+    def __init__(self, rng, minimal_actions):
+        
+        self.rng = rng
+        self.minimal_actions = minimal_actions
+        self.eps_param = 1.0
+        self.experience_replay_buffer_size = 100000
+        self.experience_replay_buffer_circle_ind = 0
+        self.experience_replay_buffer = []
+        self.state = np.zeros((4, 84, 84), dtype=np.float32)
+        self.action_ind = 0
+        self.action_count = 0.0
+        self.network = DqnNN().to('cuda')
+        self.network_target = DqnNN().to('cuda')
+        self.network_target_update_freq = 10000
+        self.batch_size = 32
+        self.discount_gamma = torch.tensor(0.99)
+        self.lr_value = 0.00025
+        self.loss_fn = torch.nn.SmoothL1Loss()
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.lr_value)
+        
+        self.network_target.load_state_dict(self.network.state_dict())
+    
+    
+    def __call__(self, screen, reward):
+        
+        state_new = self.update_state(screen)
+        self.update_experience_replay_buffer(state_new, reward)
+        action, self.action_ind = self.act_eps_greedy(state_new)
+        self.state = state_new
+        
+        if self.action_count >= self.experience_replay_buffer_size:
+            self.train_network()
+        
+        return action
+    
+    def update_state(self, screen):
+    
+        state_new = np.concatenate((np.expand_dims(screen, axis=0), self.state[0:3, :,:]))
+        
+        return state_new
+    
+    def update_experience_replay_buffer(self, state_new, reward):
+        
+        if len(self.experience_replay_buffer) < self.experience_replay_buffer_size:
+            self.experience_replay_buffer.append((self.state, state_new, self.action_ind, reward))
+        else:
+            self.experience_replay_buffer[self.experience_replay_buffer_circle_ind] = (self.state, state_new, self.action_ind, reward)
+        self.experience_replay_buffer_circle_ind = (self.experience_replay_buffer_circle_ind + 1) % self.experience_replay_buffer_size
+    
+    def act_eps_greedy(self, state_new):
+        
+        if self.rng.random() < self.eps_param:
+            action_index = self.rng.integers(len(self.minimal_actions))  # 0, 1, ..., no_of_act-1
+        else:
+            state_tensor = torch.from_numpy(state_new).cuda().unsqueeze(0)
+            with torch.no_grad():
+                net_out = self.network(state_tensor)
+            action_index = torch.argmax(net_out).cpu().numpy()
+        
+        action = self.minimal_actions[action_index]
+        
+        self.eps_param = max(1.0*(1.0 - self.action_count/1e6) + 0.1*self.action_count/1e6, 0.1)
+        self.action_count += 1.0
+        
+        return action, action_index
+    
+    def sample_batch(self):
+        
+        state_batch_np = np.empty((self.batch_size, 4, 84, 84), dtype=np.float32)
+        state_next_batch_np = np.empty((self.batch_size, 4, 84, 84), dtype=np.float32)
+        action_ind_batch_np = np.empty(self.batch_size, dtype=np.int64)
+        reward_batch_np = np.empty(self.batch_size, dtype=np.float32)
+        
+        for sample_no in range(self.batch_size):
+            
+            random_sample_ind = self.rng.integers(self.experience_replay_buffer_size)
+            (state, state_next, action_ind, reward) = self.experience_replay_buffer[random_sample_ind]
+            state_batch_np[sample_no,:,:,:] = state
+            state_next_batch_np[sample_no,:,:,:] = state_next
+            action_ind_batch_np[sample_no] = action_ind
+            reward_batch_np[sample_no] = reward
+        
+        return state_batch_np, state_next_batch_np, action_ind_batch_np, reward_batch_np
+    
+    def train_network(self):
+        
+        if int(self.action_count) % self.network_target_update_freq == 0:
+            self.network_target.load_state_dict(self.network.state_dict())
+            print(' ')
+            print('Target network has been updated!')
+        
+        state_batch_np, state_next_batch_np, action_ind_batch_np, reward_batch_np = self.sample_batch()
+        
+        state_batch_tensor = torch.from_numpy(state_batch_np).cuda()
+        state_next_batch_tensor = torch.from_numpy(state_next_batch_np).cuda()
+        
+        with torch.no_grad():
+            net_out_state_next = self.network_target(state_next_batch_tensor)
+            action_ind_max = torch.argmax(net_out_state_next, axis=1)
+            q_next_max = net_out_state_next[np.arange(self.batch_size), action_ind_max]
+            q_pred = torch.from_numpy(reward_batch_np).cuda() + self.discount_gamma * q_next_max
+        
+        net_out_state = self.network(state_batch_tensor)
+        q_actual = net_out_state[np.arange(self.batch_size), action_ind_batch_np]
+        
+        loss = self.loss_fn(q_actual, q_pred)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+
+def main():
+    
+    rng = np.random.default_rng()
+    
+    ale = ale_init(rng)
+    
+    minimal_actions = ale.getMinimalActionSet()
+    screen_width, screen_height = ale.getScreenDims()
+    
+    dqn_agent = DqnAgent(rng, minimal_actions)
+    
+    n_frames = int(2e7)
+    
+    episode_no = 0
+    
+    while ale.getFrameNumber() < n_frames:
+        
+        ale.reset_game()
+        episode_no += 1
+        total_reward = 0.0
+        action = 0
+        
+        while not ale.game_over():
+            
+            screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
+            screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
+            action = dqn_agent(screen_preproc_15hz, reward_15hz)
+            
+            total_reward += reward_15hz
+            
+            if ale.game_over():
+                
+                episode_frame_number = ale.getEpisodeFrameNumber()
+                frame_number = ale.getFrameNumber()
+                print(' ')
+                print('Frame Number: ' + str(frame_number) + '; Episode Frame Number: ' + str(episode_frame_number))
+                print('Episode ' + str(episode_no) + ' ended with score: ' + str(total_reward))
+                print('eps-greedy value: ' + str(dqn_agent.eps_param))
+
+
+if __name__ == '__main__':
+    main()
