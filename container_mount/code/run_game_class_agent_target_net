@@ -14,7 +14,7 @@ from torch import nn
 
 class DqnNN(nn.Module):
     
-    def __init__(self):
+    def __init__(self, no_of_actions):
         super(DqnNN, self).__init__()
         
         self.conv = nn.Sequential(
@@ -27,7 +27,7 @@ class DqnNN(nn.Module):
             nn.Flatten(),
             nn.Linear(3136, 512),
             nn.ReLU(),
-            nn.Linear(512, 6))
+            nn.Linear(512, no_of_actions))
     
     def forward(self, x):
         conv_out = self.conv(x)
@@ -44,13 +44,16 @@ def ale_init(rng):
     minimal_actions = ale.getMinimalActionSet()
     (screen_width,screen_height) = ale.getScreenDims()
     ale_seed = rng.integers(2^32)
-    ale.setInt(b'random_seed',ale_seed)
+    ale.setInt(b'random_seed', ale_seed)
     random_seed = ale.getInt(b'random_seed')
+    ale.setFloat(b'repeat_action_probability', 0.0)
+    action_repeat_prob = ale.getFloat(b'repeat_action_probability')
     
     print('width/height: ' +str(screen_width) + '/' + str(screen_height))
     print('max frames per episode: ' + str(max_frames_per_episode))
     print('minimal actions: ' + str(minimal_actions))
-    print('random_seed: ' + str(random_seed))
+    print('random seed: ' + str(random_seed))
+    print('action repeat prob.: ' + str(action_repeat_prob))
     
     return ale
 
@@ -104,32 +107,38 @@ class DqnAgent():
         self.rng = rng
         self.minimal_actions = minimal_actions
         self.eps_param = 1.0
-        self.experience_replay_buffer_size = 100000
+        self.eps_param_eval = 0.05
+        self.experience_replay_buffer_size = 200000
         self.experience_replay_buffer_circle_ind = 0
         self.experience_replay_buffer = []
         self.state = np.zeros((4, 84, 84), dtype=np.float32)
         self.action_ind = 0
-        self.action_count = 0.0
-        self.network = DqnNN().to('cuda')
-        self.network_target = DqnNN().to('cuda')
+        self.action_count = 0
+        self.network = DqnNN(len(minimal_actions)).to('cuda')
+        self.network_target = DqnNN(len(minimal_actions)).to('cuda')
         self.network_target_update_freq = 10000
+        self.train_network_stepsize = 4
         self.batch_size = 32
         self.discount_gamma = torch.tensor(0.99)
         self.lr_value = 0.00025
         self.loss_fn = torch.nn.SmoothL1Loss()
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.lr_value)
+        self.clip_rewards_flag = True
         
         self.network_target.load_state_dict(self.network.state_dict())
     
     
-    def __call__(self, screen, reward):
+    def __call__(self, screen, reward, train_flag):
         
         state_new = self.update_state(screen)
-        self.update_experience_replay_buffer(state_new, reward)
-        action, self.action_ind = self.act_eps_greedy(state_new)
+        
+        if train_flag:
+            self.update_experience_replay_buffer(state_new, reward)
+        
+        action, self.action_ind = self.act_eps_greedy(state_new, train_flag)
         self.state = state_new
         
-        if self.action_count >= self.experience_replay_buffer_size:
+        if train_flag and self.action_count >= self.experience_replay_buffer_size and self.action_count % self.train_network_stepsize == 0:
             self.train_network()
         
         return action
@@ -148,9 +157,14 @@ class DqnAgent():
             self.experience_replay_buffer[self.experience_replay_buffer_circle_ind] = (self.state, state_new, self.action_ind, reward)
         self.experience_replay_buffer_circle_ind = (self.experience_replay_buffer_circle_ind + 1) % self.experience_replay_buffer_size
     
-    def act_eps_greedy(self, state_new):
+    def act_eps_greedy(self, state_new, train_flag):
         
-        if self.rng.random() < self.eps_param:
+        if train_flag:
+            eps_param_value = self.eps_param
+        else:
+            eps_param_value = self.eps_param_eval
+        
+        if self.rng.random() < eps_param_value:
             action_index = self.rng.integers(len(self.minimal_actions))  # 0, 1, ..., no_of_act-1
         else:
             state_tensor = torch.from_numpy(state_new).cuda().unsqueeze(0)
@@ -160,8 +174,9 @@ class DqnAgent():
         
         action = self.minimal_actions[action_index]
         
-        self.eps_param = max(1.0*(1.0 - self.action_count/1e6) + 0.1*self.action_count/1e6, 0.1)
-        self.action_count += 1.0
+        if train_flag:
+            self.eps_param = max(1.0*(1.0 - self.action_count/1e6) + 0.1*self.action_count/1e6, 0.1)
+            self.action_count += 1
         
         return action, action_index
     
@@ -183,12 +198,25 @@ class DqnAgent():
         
         return state_batch_np, state_next_batch_np, action_ind_batch_np, reward_batch_np
     
+    def clip_reward(self, reward_vec):
+        
+        for i in range(len(reward_vec)):
+            if reward_vec[i] > 0.0:
+                reward_vec[i] = 1.0
+            elif reward_vec[i] < 0.0:
+                reward_vec[i] = -1.0
+        
+        return reward_vec
+    
     def train_network(self):
         
         if int(self.action_count) % self.network_target_update_freq == 0:
             self.network_target.load_state_dict(self.network.state_dict())
         
         state_batch_np, state_next_batch_np, action_ind_batch_np, reward_batch_np = self.sample_batch()
+        
+        if self.clip_rewards_flag:
+            reward_batch_np = self.clip_reward(reward_batch_np)
         
         state_batch_tensor = torch.from_numpy(state_batch_np).cuda()
         state_next_batch_tensor = torch.from_numpy(state_next_batch_np).cuda()
@@ -219,33 +247,100 @@ def main():
     
     dqn_agent = DqnAgent(rng, minimal_actions)
     
-    n_frames = int(2e7)
+    n_training_epochs = 50
+    n_steps_per_training_epoch = 250000
+    n_steps_per_eval_epoch = 125000
+    no_op_max_during_eval = 30
     
-    episode_no = 0
+    training_episode_no = 0
+    eval_episode_no = 0
     
-    while ale.getFrameNumber() < n_frames:
+    eval_reward_list_over_epochs = []
+    
+    for epoch_no in range(n_training_epochs):
+    
+        training_step_no = 0
         
-        ale.reset_game()
-        episode_no += 1
-        total_reward = 0.0
-        action = 0
-        
-        while not ale.game_over():
+        while training_step_no < n_steps_per_training_epoch:
             
-            screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
-            screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
-            action = dqn_agent(screen_preproc_15hz, reward_15hz)
+            ale.reset_game()
+            training_episode_no += 1
+            total_reward = 0.0
+            action = 0
             
-            total_reward += reward_15hz
-            
-            if ale.game_over():
+            while not ale.game_over():
                 
-                episode_frame_number = ale.getEpisodeFrameNumber()
-                frame_number = ale.getFrameNumber()
-                print(' ')
-                print('Frame Number: ' + str(frame_number) + '; Episode Frame Number: ' + str(episode_frame_number))
-                print('Episode ' + str(episode_no) + ' ended with score: ' + str(total_reward))
-                print('eps-greedy value: ' + str(dqn_agent.eps_param))
+                screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
+                screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
+                action = dqn_agent(screen_preproc_15hz, reward_15hz, True)
+                
+                total_reward += reward_15hz
+                training_step_no += 1
+                
+                if ale.game_over():
+                    
+                    episode_frame_number = ale.getEpisodeFrameNumber()
+                    frame_number = ale.getFrameNumber()
+                    print(' ')
+                    print('Epoch no. ' + str(epoch_no + 1) + ' of ' + str(n_training_epochs))
+                    print('Frame Number: ' + str(frame_number) + '; Episode Frame Number: ' + str(episode_frame_number))
+                    print('Training Episode ' + str(training_episode_no) + ' ended with score: ' + str(total_reward))
+                    print('action count: ' + str(dqn_agent.action_count))
+                    print('eps-greedy value: ' + str("{:.6f}".format(dqn_agent.eps_param)))
+        
+        eval_step_no = 0
+        eval_reward_list = []
+        
+        while eval_step_no < n_steps_per_eval_epoch:
+            
+            ale.reset_game()
+            eval_episode_no += 1
+            total_reward = 0.0
+            action = 0
+            no_op_action_count = 0
+            no_op_max_this_episode = rng.integers(no_op_max_during_eval)
+            
+            while not ale.game_over():
+                
+                screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
+                screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
+                
+                if no_op_action_count < no_op_max_this_episode:
+                    action = 0
+                else:    
+                    action = dqn_agent(screen_preproc_15hz, reward_15hz, False)
+                no_op_action_count += 1
+                
+                total_reward += reward_15hz
+                eval_step_no += 1
+                
+                if ale.game_over():
+                    
+                    episode_frame_number = ale.getEpisodeFrameNumber()
+                    frame_number = ale.getFrameNumber()
+                    eval_reward_list.append(total_reward)
+                    print(' ')
+                    print('Epoch no. ' + str(epoch_no + 1) + ' of ' + str(n_training_epochs))
+                    print('Frame Number: ' + str(frame_number) + '; Episode Frame Number: ' + str(episode_frame_number))
+                    print('Eval Episode ' + str(eval_episode_no) + ' ended with score: ' + str(total_reward))
+                    print('eps-greedy value eval: ' + str(dqn_agent.eps_param_eval))
+                    print('action count: ' + str(dqn_agent.action_count))
+                    print('eps-greedy value: ' + str("{:.6f}".format(dqn_agent.eps_param)))
+        
+        eval_epoch_mean = np.mean(eval_reward_list)
+        eval_reward_list_over_epochs.append(eval_epoch_mean)
+        print(' ')
+        print('**************')
+        print('Eval Epoch mean: ' + str("{:.1f}".format(eval_epoch_mean)))
+        print('**************')
+    
+    print(' ')
+    print('Evals over epochs:')
+    
+    for i in range(len(eval_reward_list_over_epochs)):
+        print(str("{:.1f}".format(eval_reward_list_over_epochs[i])))
+    
+    print(' ')
 
 
 if __name__ == '__main__':
