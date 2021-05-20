@@ -289,7 +289,7 @@ def main():
     
     dqn_agent = DqnAgent(rng, minimal_actions)
     
-    n_training_epochs = 50
+    n_training_epochs = 200
     n_steps_per_training_epoch = 250000
     n_steps_per_eval_epoch = 125000
     no_op_max_during_eval = 30
