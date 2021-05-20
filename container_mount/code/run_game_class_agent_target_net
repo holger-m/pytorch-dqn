@@ -57,6 +57,7 @@ def ale_init(rng):
     
     return ale
 
+
 def ale_15hz(ale, action):
     
     (screen_width,screen_height) = ale.getScreenDims()
@@ -98,6 +99,48 @@ def preproc_screen(screen_np_in):
     screen_y_84x84_float_rescaled_np = np.array(screen_y_84x84, dtype=np.float32)/255.0
     
     return screen_y_84x84_float_rescaled_np
+
+
+def run_episode(ale, dqn_agent, step_no, no_op_max_this_episode, train_flag):
+    
+    ale.reset_game()
+    episode_reward = 0.0
+    action = 0
+    no_op_action_count = 0
+    
+    while not ale.game_over():
+        
+        screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
+        screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
+        
+        if no_op_action_count < no_op_max_this_episode:
+            action = 0
+        else:
+            action = dqn_agent(screen_preproc_15hz, reward_15hz, train_flag)
+        no_op_action_count += 1
+        
+        episode_reward += reward_15hz
+        step_no += 1
+    
+    return episode_reward, step_no
+
+
+def print_report(ale, dqn_agent, epoch_no, n_training_epochs, episode_reward, episode_no, train_flag):
+    
+    episode_frame_number = ale.getEpisodeFrameNumber()
+    frame_number = ale.getFrameNumber()
+    
+    print(' ')
+    if train_flag:
+        print('TRAINING:')
+    else:
+        print('EVALUATION:')
+    print('Epoch no. ' + str(epoch_no + 1) + ' of ' + str(n_training_epochs))
+    print('Frame Number: ' + str(frame_number) + '; Episode Frame Number: ' + str(episode_frame_number))
+    print('Episode ' + str(episode_no) + ' ended with score: ' + str(episode_reward))
+    print('action count: ' + str(dqn_agent.action_count))
+    print('eps-greedy training: ' + str("{:.6f}".format(dqn_agent.eps_param)))
+    print('eps-greedy evaluation: ' + str(dqn_agent.eps_param_eval))
 
 
 class DqnAgent():
@@ -243,7 +286,6 @@ def main():
     ale = ale_init(rng)
     
     minimal_actions = ale.getMinimalActionSet()
-    screen_width, screen_height = ale.getScreenDims()
     
     dqn_agent = DqnAgent(rng, minimal_actions)
     
@@ -262,85 +304,44 @@ def main():
         training_step_no = 0
         
         while training_step_no < n_steps_per_training_epoch:
-            
-            ale.reset_game()
+        
             training_episode_no += 1
-            total_reward = 0.0
-            action = 0
+            no_op_max_this_episode = 0
             
-            while not ale.game_over():
-                
-                screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
-                screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
-                action = dqn_agent(screen_preproc_15hz, reward_15hz, True)
-                
-                total_reward += reward_15hz
-                training_step_no += 1
-                
-                if ale.game_over():
-                    
-                    episode_frame_number = ale.getEpisodeFrameNumber()
-                    frame_number = ale.getFrameNumber()
-                    print(' ')
-                    print('Epoch no. ' + str(epoch_no + 1) + ' of ' + str(n_training_epochs))
-                    print('Frame Number: ' + str(frame_number) + '; Episode Frame Number: ' + str(episode_frame_number))
-                    print('Training Episode ' + str(training_episode_no) + ' ended with score: ' + str(total_reward))
-                    print('action count: ' + str(dqn_agent.action_count))
-                    print('eps-greedy value: ' + str("{:.6f}".format(dqn_agent.eps_param)))
+            episode_reward, training_step_no = run_episode(ale, dqn_agent, training_step_no, no_op_max_this_episode, True)
+            
+            print_report(ale, dqn_agent, epoch_no, n_training_epochs, episode_reward, training_episode_no, True)
+        
         
         eval_step_no = 0
         eval_reward_list = []
         
         while eval_step_no < n_steps_per_eval_epoch:
             
-            ale.reset_game()
             eval_episode_no += 1
-            total_reward = 0.0
-            action = 0
-            no_op_action_count = 0
             no_op_max_this_episode = rng.integers(no_op_max_during_eval)
             
-            while not ale.game_over():
-                
-                screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
-                screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
-                
-                if no_op_action_count < no_op_max_this_episode:
-                    action = 0
-                else:    
-                    action = dqn_agent(screen_preproc_15hz, reward_15hz, False)
-                no_op_action_count += 1
-                
-                total_reward += reward_15hz
-                eval_step_no += 1
-                
-                if ale.game_over():
-                    
-                    episode_frame_number = ale.getEpisodeFrameNumber()
-                    frame_number = ale.getFrameNumber()
-                    eval_reward_list.append(total_reward)
-                    print(' ')
-                    print('Epoch no. ' + str(epoch_no + 1) + ' of ' + str(n_training_epochs))
-                    print('Frame Number: ' + str(frame_number) + '; Episode Frame Number: ' + str(episode_frame_number))
-                    print('Eval Episode ' + str(eval_episode_no) + ' ended with score: ' + str(total_reward))
-                    print('eps-greedy value eval: ' + str(dqn_agent.eps_param_eval))
-                    print('action count: ' + str(dqn_agent.action_count))
-                    print('eps-greedy value: ' + str("{:.6f}".format(dqn_agent.eps_param)))
+            episode_reward, eval_step_no = run_episode(ale, dqn_agent, eval_step_no, no_op_max_this_episode, False)
+            
+            eval_reward_list.append(episode_reward)
+            
+            print_report(ale, dqn_agent, epoch_no, n_training_epochs, episode_reward, eval_episode_no, False)
         
         eval_epoch_mean = np.mean(eval_reward_list)
         eval_reward_list_over_epochs.append(eval_epoch_mean)
+        
         print(' ')
         print('**************')
         print('Eval Epoch mean: ' + str("{:.1f}".format(eval_epoch_mean)))
         print('**************')
-    
-    print(' ')
-    print('Evals over epochs:')
-    
-    for i in range(len(eval_reward_list_over_epochs)):
-        print(str("{:.1f}".format(eval_reward_list_over_epochs[i])))
-    
-    print(' ')
+        
+        print(' ')
+        print('Evals over epochs:')
+        
+        for i in range(len(eval_reward_list_over_epochs)):
+            print(str("{:.1f}".format(eval_reward_list_over_epochs[i])))
+        
+        print(' ')
 
 
 if __name__ == '__main__':
