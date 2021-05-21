@@ -1,0 +1,3 @@
+docker run -it --name ale_task_present \
+    -v /home/mohr/pytorch-dqn/container_mount:/workspace/container_mount \
+    ale_image_task_present bash

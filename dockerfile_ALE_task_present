@@ -1,0 +1,17 @@
+FROM python
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get update
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y git-all \
+    build-essential \
+    cmake
+
+RUN git clone --depth 1 --branch v0.6.1 https://github.com/mgbellemare/Arcade-Learning-Environment.git /workspace/Arcade-Learning-Environment
+
+RUN cd /workspace/Arcade-Learning-Environment && mkdir build
+RUN cd /workspace/Arcade-Learning-Environment/build && cmake -DUSE_SDL=OFF -DUSE_RLGLUE=OFF -DBUILD_EXAMPLES=ON ..
+RUN cd /workspace/Arcade-Learning-Environment/build && make -j 4
+
+RUN cd /workspace/Arcade-Learning-Environment && pip install .
+
+RUN pip install numpy
+RUN pip install pygame

@@ -1,0 +1,1 @@
+docker build -t ale_image_task_present -f dockerfile_ALE_task_present . 
