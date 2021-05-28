@@ -306,7 +306,8 @@ def main():
         while training_step_no < n_steps_per_training_epoch:
         
             training_episode_no += 1
-            no_op_max_this_episode = 0
+            #no_op_max_this_episode = 0
+            no_op_max_this_episode = rng.integers(no_op_max_during_eval)
             
             episode_reward, training_step_no = run_episode(ale, dqn_agent, training_step_no, no_op_max_this_episode, True)
             
