@@ -135,7 +135,7 @@ episode = 0
 total_reward = 0.0
 total_total_reward = 0.0
 
-n_frames = 25200
+n_frames = 25200  # must be divisible by 4
 human_play_flag = True
 
 loop_count = 0
@@ -148,7 +148,7 @@ a_old = 0
 response_flag_0 = np.zeros((1, 1), dtype=np.uint8)
 screen_flag_1 = np.ones((1, 1), dtype=np.uint8)
 
-screen_15hz_RGB = np.zeros((n_frames/4, 2*210*160), dtype=np.int32)
+screen_15hz_RGB = np.zeros((int(n_frames/4), 2*210*160), dtype=np.int32)
 responses_vec = np.zeros(n_frames, dtype=np.uint8)
 reward_vec = np.zeros(n_frames, dtype=np.double)
 episode_vec = np.zeros(n_frames, dtype=np.int32)
@@ -252,18 +252,20 @@ while(loop_count < n_frames):
     screen.fill((0,0,0))
 
     #get atari screen pixels and blit them
-    numpy_surface = np.frombuffer(game_surface.get_buffer(),dtype=np.int32)
-    ale.getScreenRGB(numpy_surface)
+    numpy_surface = np.frombuffer(game_surface.get_buffer(),dtype=np.uint8)
+    screen_temp = ale.getScreenRGB()
+    screen_temp = np.reshape(np.dstack((screen_temp[:,:,2], screen_temp[:,:,1], screen_temp[:,:,0], np.zeros((screen_height, screen_width), dtype=np.uint8))), 210*160*4)
+    numpy_surface[:] = screen_temp
 
     if(mod_4_count == 3):
-
-        screen_15hz_RGB[loop_15hz_count,0:33600] = numpy_surface
+        pass
+        #screen_15hz_RGB[loop_15hz_count,0:33600] = numpy_surface
 
     if(mod_4_count == 4):
 
         mod_4_count = 0        
 
-        screen_15hz_RGB[loop_15hz_count,33600:67200] = numpy_surface
+        #screen_15hz_RGB[loop_15hz_count,33600:67200] = numpy_surface
 
         if (not human_play_flag):
 
