@@ -2,4 +2,6 @@ docker run -it --name ale_task_present \
     -v /home/mohr/pytorch-dqn/container_mount:/workspace/container_mount \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -e DISPLAY \
+    --device /dev/snd \
+    --tmpfs /media/ramdisk \
     ale_image_task_present bash

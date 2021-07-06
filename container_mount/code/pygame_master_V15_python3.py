@@ -147,6 +147,7 @@ a_old = 0
 
 response_flag_0 = np.zeros((1, 1), dtype=np.uint8)
 screen_flag_1 = np.ones((1, 1), dtype=np.uint8)
+screen_temp = np.zeros((210, 160, 3), dtype=np.uint8)
 
 screen_15hz_RGB = np.zeros((int(n_frames/4), 2*210*160), dtype=np.int32)
 responses_vec = np.zeros(n_frames, dtype=np.uint8)
@@ -253,9 +254,9 @@ while(loop_count < n_frames):
 
     #get atari screen pixels and blit them
     numpy_surface = np.frombuffer(game_surface.get_buffer(),dtype=np.uint8)
-    screen_temp = ale.getScreenRGB()
-    screen_temp = np.reshape(np.dstack((screen_temp[:,:,2], screen_temp[:,:,1], screen_temp[:,:,0], np.zeros((screen_height, screen_width), dtype=np.uint8))), 210*160*4)
-    numpy_surface[:] = screen_temp
+    ale.getScreenRGB(screen_temp)
+    screen_temp_reversed = np.reshape(np.dstack((screen_temp[:,:,2], screen_temp[:,:,1], screen_temp[:,:,0], np.zeros((screen_height, screen_width), dtype=np.uint8))), 210*160*4)
+    numpy_surface[:] = screen_temp_reversed
 
     if(mod_4_count == 3):
         pass
