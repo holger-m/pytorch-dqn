@@ -168,6 +168,7 @@ class DqnAgent():
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.lr_value)
         self.clip_rewards_flag = True
         
+        #TODO: CHECK WHETHER DEEPCOPY IS REQUIRED INSTEAD?!?
         self.network_target.load_state_dict(self.network.state_dict())
     
     
@@ -254,6 +255,7 @@ class DqnAgent():
     def train_network(self):
         
         if int(self.action_count) % self.network_target_update_freq == 0:
+            #TODO: CHECK WHETHER DEEPCOPY IS REQUIRED INSTEAD?!?
             self.network_target.load_state_dict(self.network.state_dict())
         
         state_batch_np, state_next_batch_np, action_ind_batch_np, reward_batch_np = self.sample_batch()
@@ -338,6 +340,8 @@ def main():
         
         print(' ')
         print('Evals over epochs:')
+        
+        torch.save(dqn_agent.network.state_dict(), '/workspace/container_mount/data/space_inv_DNN_epoch_' + str(epoch_no).zfill(3) + '.pt')
         
         for i in range(len(eval_reward_list_over_epochs)):
             print(str("{:.1f}".format(eval_reward_list_over_epochs[i])))
