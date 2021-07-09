@@ -158,7 +158,7 @@ class DqnAgent():
         self.action_ind = 0
         self.action_count = 0
         self.network = DqnNN(len(minimal_actions)).to('cuda')
-        self.network_target = DqnNN(len(minimal_actions)).to('cuda')
+        #self.network_target = DqnNN(len(minimal_actions)).to('cuda')
         self.network_target_update_freq = 10000
         self.train_network_stepsize = 4
         self.batch_size = 32
@@ -169,7 +169,8 @@ class DqnAgent():
         self.clip_rewards_flag = True
         
         #TODO: CHECK WHETHER DEEPCOPY IS REQUIRED INSTEAD?!?
-        self.network_target.load_state_dict(self.network.state_dict())
+        #self.network_target.load_state_dict(self.network.state_dict())
+        self.network_target = copy.deepcopy(self.network)
     
     
     def __call__(self, screen, reward, train_flag):
@@ -256,7 +257,8 @@ class DqnAgent():
         
         if int(self.action_count) % self.network_target_update_freq == 0:
             #TODO: CHECK WHETHER DEEPCOPY IS REQUIRED INSTEAD?!?
-            self.network_target.load_state_dict(self.network.state_dict())
+            #self.network_target.load_state_dict(self.network.state_dict())
+            self.network_target = copy.deepcopy(self.network)
         
         state_batch_np, state_next_batch_np, action_ind_batch_np, reward_batch_np = self.sample_batch()
         
@@ -295,6 +297,7 @@ def main():
     n_steps_per_training_epoch = 250000
     n_steps_per_eval_epoch = 125000
     no_op_max_during_eval = 30
+    weight_storage_stepsize = 10
     
     training_episode_no = 0
     eval_episode_no = 0
@@ -341,7 +344,8 @@ def main():
         print(' ')
         print('Evals over epochs:')
         
-        torch.save(dqn_agent.network.state_dict(), '/workspace/container_mount/data/space_inv_DNN_epoch_' + str(epoch_no).zfill(3) + '.pt')
+        if epoch_no + 1 % weight_storage_stepsize == 0:
+            torch.save(dqn_agent.network.state_dict(), '/workspace/container_mount/data/space_inv_DNN_epoch_' + str(epoch_no + 1).zfill(3) + '.pt')
         
         for i in range(len(eval_reward_list_over_epochs)):
             print(str("{:.1f}".format(eval_reward_list_over_epochs[i])))
