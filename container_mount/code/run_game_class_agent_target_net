@@ -345,7 +345,7 @@ def main():
         print(' ')
         print('Evals over epochs:')
         
-        if epoch_no + 1 % weight_storage_stepsize == 0:
+        if (epoch_no + 1) % weight_storage_stepsize == 0:
             torch.save(dqn_agent.network.state_dict(), '/workspace/container_mount/data/space_inv_DNN_epoch_' + str(epoch_no + 1).zfill(3) + '.pt')
         
         for i in range(len(eval_reward_list_over_epochs)):
