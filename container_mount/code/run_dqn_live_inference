@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+
 # -*- coding: utf-8 -*-
 
-"""created 14.04.2021
+"""created 16.08.2021
 @author: holger mohr
 """
+
 
 from ale_python_interface import ALEInterface
 import numpy as np
@@ -11,6 +13,8 @@ from PIL import Image
 import torch
 from torch import nn
 import copy
+import time
+import fcntl
 
 
 class DqnNN(nn.Module):
@@ -59,28 +63,31 @@ def ale_init(rng):
     return ale
 
 
-def ale_15hz(ale, action):
+def ale_15hz_live(action, last_15hz_screen):
     
-    (screen_width,screen_height) = ale.getScreenDims()
+    #(screen_width,screen_height) = ale.getScreenDims()
     
-    screen_vec_1 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
-    screen_vec_2 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+    #screen_vec_1 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
+    #screen_vec_2 = np.empty((screen_height, screen_width, 3), dtype=np.uint8)
     
     reward_sum = 0
     
-    reward = ale.act(action)
-    reward_sum += reward
+    #reward = ale.act(action)
+    #reward_sum += reward
     
-    reward = ale.act(action)
-    reward_sum += reward
+    #reward = ale.act(action)
+    #reward_sum += reward
     
-    reward = ale.act(action)
-    reward_sum += reward
-    ale.getScreenRGB(screen_vec_1)
+    #reward = ale.act(action)
+    #reward_sum += reward
+    #ale.getScreenRGB(screen_vec_1)
     
-    reward = ale.act(action)
-    reward_sum += reward
-    ale.getScreenRGB(screen_vec_2)
+    #reward = ale.act(action)
+    #reward_sum += reward
+    #ale.getScreenRGB(screen_vec_2)
+    
+    screen_vec_1 = last_15hz_screen[:,:,:,0]
+    screen_vec_2 = last_15hz_screen[:,:,:,1]
     
     screen_R_max = np.amax(np.dstack((screen_vec_1[:,:,0], screen_vec_2[:,:,0])), axis=2)
     screen_G_max = np.amax(np.dstack((screen_vec_1[:,:,1], screen_vec_2[:,:,1])), axis=2)
@@ -102,48 +109,6 @@ def preproc_screen(screen_np_in):
     return screen_y_84x84_float_rescaled_np
 
 
-def run_episode(ale, dqn_agent, step_no, no_op_max_this_episode, train_flag):
-    
-    ale.reset_game()
-    episode_reward = 0.0
-    action = 0
-    no_op_action_count = 0
-    
-    while not ale.game_over():
-        
-        screen_RGB_15hz, reward_15hz = ale_15hz(ale, action)
-        screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
-        
-        if no_op_action_count < no_op_max_this_episode:
-            action = 0
-        else:
-            action = dqn_agent(screen_preproc_15hz, reward_15hz, train_flag)
-        no_op_action_count += 1
-        
-        episode_reward += reward_15hz
-        step_no += 1
-    
-    return episode_reward, step_no
-
-
-def print_report(ale, dqn_agent, epoch_no, n_training_epochs, episode_reward, episode_no, train_flag):
-    
-    episode_frame_number = ale.getEpisodeFrameNumber()
-    frame_number = ale.getFrameNumber()
-    
-    print(' ')
-    if train_flag:
-        print('TRAINING:')
-    else:
-        print('EVALUATION:')
-    print('Epoch no. ' + str(epoch_no + 1) + ' of ' + str(n_training_epochs))
-    print('Frame Number: ' + str(frame_number) + '; Episode Frame Number: ' + str(episode_frame_number))
-    print('Episode ' + str(episode_no) + ' ended with score: ' + str(episode_reward))
-    print('action count: ' + str(dqn_agent.action_count))
-    print('eps-greedy training: ' + str("{:.6f}".format(dqn_agent.eps_param)))
-    print('eps-greedy evaluation: ' + str(dqn_agent.eps_param_eval))
-
-
 class DqnAgent():
     
     def __init__(self, rng, minimal_actions):
@@ -152,7 +117,7 @@ class DqnAgent():
         self.minimal_actions = minimal_actions
         self.eps_param = 1.0
         self.eps_param_eval = 0.05
-        self.experience_replay_buffer_size = 400000
+        self.experience_replay_buffer_size = 200000
         self.experience_replay_buffer_circle_ind = 0
         self.experience_replay_buffer = []
         self.state = np.zeros((4, 84, 84), dtype=np.float32)
@@ -166,8 +131,7 @@ class DqnAgent():
         self.discount_gamma = torch.tensor(0.99)
         self.lr_value = 0.00025
         self.loss_fn = torch.nn.SmoothL1Loss()
-        #self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.lr_value)
-        self.optimizer = torch.optim.RMSprop(self.network.parameters(), lr=self.lr_value, momentum=0.95, eps=0.0001)
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.lr_value)
         self.clip_rewards_flag = True
         
         #TODO: CHECK WHETHER DEEPCOPY IS REQUIRED INSTEAD?!?
@@ -295,65 +259,63 @@ def main():
     
     dqn_agent = DqnAgent(rng, minimal_actions)
     
-    n_training_epochs = 200
-    n_steps_per_training_epoch = 250000
-    n_steps_per_eval_epoch = 125000
-    no_op_max_during_eval = 30
-    weight_storage_stepsize = 10
+    #torch.save(dqn_agent.network.state_dict(), '/workspace/container_mount/data/space_inv_DNN_epoch_' + str(epoch_no + 1).zfill(3) + '.pt')
+    dqn_agent.network.load_state_dict(torch.load('/workspace/container_mount/data/space_inv_DNN_epoch_130.pt'))
+    dqn_agent.network.eval()
     
-    training_episode_no = 0
-    eval_episode_no = 0
+    n_frames_15hz = 6300
     
-    eval_reward_list_over_epochs = []
+    action = 0
     
-    for epoch_no in range(n_training_epochs):
+    response_flag_1 = np.ones((1, 1), dtype=np.uint8)
+    screen_flag_0 = np.zeros((1, 1), dtype=np.uint8)
+    action_ind_ALE = np.zeros((1, 1), dtype=np.uint8)
     
-        training_step_no = 0
+    time_start = time.time()
+    
+    for frame_no in range(n_frames_15hz):
         
-        while training_step_no < n_steps_per_training_epoch:
+        repeat_wait_flag = True
         
-            training_episode_no += 1
-            #no_op_max_this_episode = 0
-            no_op_max_this_episode = rng.integers(no_op_max_during_eval)
+        while repeat_wait_flag:
+            fd_screen = open('/workspace/container_mount/ramdisk/screenlock', 'r')
+            fcntl.flock(fd_screen, fcntl.LOCK_EX)
+            screen_flag_csv = np.loadtxt(open("/workspace/container_mount/ramdisk/screen_flag.csv"))
+            fcntl.flock(fd_screen, fcntl.LOCK_UN)
+            fd_screen.close()
             
-            episode_reward, training_step_no = run_episode(ale, dqn_agent, training_step_no, no_op_max_this_episode, True)
-            
-            print_report(ale, dqn_agent, epoch_no, n_training_epochs, episode_reward, training_episode_no, True)
+            if (screen_flag_csv == 1):
+                time_end = time.time()
+                print(frame_no)
+                print(time_end - time_start)
+                print(" ")
+                time_start = time.time()
+                np.savetxt("/workspace/container_mount/ramdisk/screen_flag.csv", screen_flag_0, fmt='%01.0u')
+                repeat_wait_flag = False
+            else:
+                time.sleep(0.01)
+                
+        last_15hz_screen = np.load('/workspace/container_mount/ramdisk/last_15hz_screen.npy')
         
+        screen_RGB_15hz, reward_15hz = ale_15hz_live(action, last_15hz_screen)
         
-        eval_step_no = 0
-        eval_reward_list = []
+        screen_preproc_15hz = preproc_screen(screen_RGB_15hz)
         
-        while eval_step_no < n_steps_per_eval_epoch:
-            
-            eval_episode_no += 1
-            no_op_max_this_episode = rng.integers(no_op_max_during_eval)
-            
-            episode_reward, eval_step_no = run_episode(ale, dqn_agent, eval_step_no, no_op_max_this_episode, False)
-            
-            eval_reward_list.append(episode_reward)
-            
-            print_report(ale, dqn_agent, epoch_no, n_training_epochs, episode_reward, eval_episode_no, False)
+        action = dqn_agent(screen_preproc_15hz, reward_15hz, False)
         
-        eval_epoch_mean = np.mean(eval_reward_list)
-        eval_reward_list_over_epochs.append(eval_epoch_mean)
+        print(action)
         
-        print(' ')
-        print('**************')
-        print('Eval Epoch mean: ' + str("{:.1f}".format(eval_epoch_mean)))
-        print('**************')
+        action_ind_ALE[0] = action
+
+        np.savetxt('/workspace/container_mount/ramdisk/action_ind_ALE.csv', action_ind_ALE, fmt='%01.0u')
         
-        print(' ')
-        print('Evals over epochs:')
-        
-        if (epoch_no + 1) % weight_storage_stepsize == 0:
-            torch.save(dqn_agent.network.state_dict(), '/workspace/container_mount/data/space_inv_DNN_epoch_' + str(epoch_no + 1).zfill(3) + '.pt')
-        
-        for i in range(len(eval_reward_list_over_epochs)):
-            print(str("{:.1f}".format(eval_reward_list_over_epochs[i])))
-        
-        print(' ')
+        fd_response = open('/workspace/container_mount/ramdisk/responselock', 'r')
+        fcntl.flock(fd_response, fcntl.LOCK_EX)
+        np.savetxt('/workspace/container_mount/ramdisk/response_flag.csv', response_flag_1, fmt='%01.0u')
+        fcntl.flock(fd_response, fcntl.LOCK_UN)
+        fd_response.close()
 
 
 if __name__ == '__main__':
     main()
+    

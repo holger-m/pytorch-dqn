@@ -6,3 +6,5 @@ https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.
 
 Type "xhost + local:docker" on host to give ale_task_present container display access
 
+Run "set_ramdisk_on_host" before collecting task data
+

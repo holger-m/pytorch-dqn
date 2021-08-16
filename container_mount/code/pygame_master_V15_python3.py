@@ -13,6 +13,8 @@ from ale_python_interface import ALEInterface
 import numpy as np
 import pygame
 import time
+import fcntl
+
 
 np.set_printoptions(threshold=sys.maxsize) # print arrays completely
 
@@ -107,6 +109,10 @@ ale.setInt(b"random_seed",ale_seed)
 random_seed = ale.getInt(b"random_seed")
 print("random_seed: " + str(random_seed))
 
+ale.setFloat(b'repeat_action_probability', 0.0)
+action_repeat_prob = ale.getFloat(b'repeat_action_probability')
+print('action repeat prob.: ' + str(action_repeat_prob))
+
 ale.loadROM(str.encode(sys.argv[1]))
 legal_actions = ale.getMinimalActionSet()
 print(legal_actions)
@@ -119,7 +125,8 @@ print("width/height: " +str(screen_width) + "/" + str(screen_height))
 
 #init pygame
 pygame.init()
-screen = pygame.display.set_mode((display_width,display_height), pygame.FULLSCREEN)
+#screen = pygame.display.set_mode((display_width,display_height), pygame.FULLSCREEN)
+screen = pygame.display.set_mode((display_width,display_height))
 pygame.display.set_caption("Arcade Learning Environment Player Agent Display")
 
 game_surface = pygame.Surface((screen_width,screen_height))
@@ -136,7 +143,7 @@ total_reward = 0.0
 total_total_reward = 0.0
 
 n_frames = 25200  # must be divisible by 4
-human_play_flag = True
+human_play_flag = False
 
 loop_count = 0
 loop_count_intro = 0
@@ -149,7 +156,8 @@ response_flag_0 = np.zeros((1, 1), dtype=np.uint8)
 screen_flag_1 = np.ones((1, 1), dtype=np.uint8)
 screen_temp = np.zeros((210, 160, 3), dtype=np.uint8)
 
-screen_15hz_RGB = np.zeros((int(n_frames/4), 2*210*160), dtype=np.int32)
+#screen_15hz_RGB = np.zeros((int(n_frames/4), 2*210*160), dtype=np.int32)
+screen_15hz_RGB = np.zeros((210, 160, 3, 2, int(n_frames/4)), dtype=np.uint8)
 responses_vec = np.zeros(n_frames, dtype=np.uint8)
 reward_vec = np.zeros(n_frames, dtype=np.double)
 episode_vec = np.zeros(n_frames, dtype=np.int32)
@@ -259,37 +267,47 @@ while(loop_count < n_frames):
     numpy_surface[:] = screen_temp_reversed
 
     if(mod_4_count == 3):
-        pass
-        #screen_15hz_RGB[loop_15hz_count,0:33600] = numpy_surface
+        
+        screen_15hz_RGB[:,:,:,0,loop_15hz_count] = screen_temp
 
     if(mod_4_count == 4):
 
         mod_4_count = 0        
 
-        #screen_15hz_RGB[loop_15hz_count,33600:67200] = numpy_surface
+        screen_15hz_RGB[:,:,:,1,loop_15hz_count] = screen_temp
 
         if (not human_play_flag):
 
-            last_15hz_screen = np.reshape(screen_15hz_RGB[loop_15hz_count,:], (1,67200))
+            #last_15hz_screen = np.reshape(screen_15hz_RGB[:,:,:,loop_15hz_count], (1,67200))
+            last_15hz_screen = screen_15hz_RGB[:,:,:,:,loop_15hz_count]
 
-            np.savetxt("/media/ramdisk/last_15hz_screen.csv", last_15hz_screen, delimiter=",", fmt='%01.0u')
-            np.savetxt("/media/ramdisk/screen_flag.csv", screen_flag_1, fmt='%01.0u')
+            #np.savetxt("/media/ramdisk/last_15hz_screen.csv", last_15hz_screen, delimiter=",", fmt='%01.0u')
+            np.save('/workspace/container_mount/ramdisk/last_15hz_screen.npy', last_15hz_screen)
+            fd_screen = open('/workspace/container_mount/ramdisk/screenlock', 'r')
+            fcntl.flock(fd_screen, fcntl.LOCK_EX)
+            np.savetxt("/workspace/container_mount/ramdisk/screen_flag.csv", screen_flag_1, fmt='%01.0u')
+            fcntl.flock(fd_screen, fcntl.LOCK_UN)
+            fd_screen.close()
 
-            repeat_wait_flag = True            
+            repeat_wait_flag = True
 
-            while repeat_wait_flag:                
-                response_flag_csv = np.loadtxt(open("/media/ramdisk/response_flag.csv"))
+            while repeat_wait_flag:
+                fd_response = open('/workspace/container_mount/ramdisk/responselock', 'r')
+                fcntl.flock(fd_response, fcntl.LOCK_EX)
+                response_flag_csv = np.loadtxt(open("/workspace/container_mount/ramdisk/response_flag.csv"))
+                fcntl.flock(fd_response, fcntl.LOCK_UN)
+                fd_response.close()
                 if (response_flag_csv == 1):
                     time_end = time.time()
                     print(loop_count)
                     print(time_end - time_start)
                     print(" ")
                     time_start = time.time()
-                    np.savetxt("/media/ramdisk/response_flag.csv", response_flag_0, fmt='%01.0u')
-                    a = np.loadtxt(open("/media/ramdisk/action_ind_ALE.csv"))
+                    np.savetxt("/workspace/container_mount/ramdisk/response_flag.csv", response_flag_0, fmt='%01.0u')
+                    a = np.loadtxt(open("/workspace/container_mount/ramdisk/action_ind_ALE.csv"))
                     repeat_wait_flag = False
                 else:
-                    time.sleep(0.1)
+                    time.sleep(0.01)
 
         loop_15hz_count += 1
 
@@ -412,10 +430,10 @@ pygame.event.pump()
 clock.tick(60.)
 
 #np.savetxt("/media/ramdisk/screen_15hz_RGB_" + save_str + ".csv", screen_15hz_RGB, delimiter=",", fmt='%01.0u')
-np.save("/media/ramdisk/screen_15hz_RGB_" + save_str, screen_15hz_RGB)
-np.savetxt("/media/ramdisk/responses_vec_" + save_str + ".csv", responses_vec, delimiter=",", fmt='%01.0u')
-np.savetxt("/media/ramdisk/reward_vec_" + save_str + ".csv", reward_vec, delimiter=",", fmt='%01.1f')
-np.savetxt("/media/ramdisk/episode_vec_" + save_str + ".csv", episode_vec, delimiter=",", fmt='%01.0u')
-np.savetxt("/media/ramdisk/trigger_vec_" + save_str + ".csv", trigger_vec, delimiter=",", fmt='%01.0u')
-np.savetxt("/media/ramdisk/trigger_vec_intro_" + save_str + ".csv", trigger_vec_intro, delimiter=",", fmt='%01.0u')
+np.save("/workspace/container_mount/ramdisk/screen_15hz_RGB_" + save_str, screen_15hz_RGB)
+np.savetxt("/workspace/container_mount/ramdisk/responses_vec_" + save_str + ".csv", responses_vec, delimiter=",", fmt='%01.0u')
+np.savetxt("/workspace/container_mount/ramdisk/reward_vec_" + save_str + ".csv", reward_vec, delimiter=",", fmt='%01.1f')
+np.savetxt("/workspace/container_mount/ramdisk/episode_vec_" + save_str + ".csv", episode_vec, delimiter=",", fmt='%01.0u')
+np.savetxt("/workspace/container_mount/ramdisk/trigger_vec_" + save_str + ".csv", trigger_vec, delimiter=",", fmt='%01.0u')
+np.savetxt("/workspace/container_mount/ramdisk/trigger_vec_intro_" + save_str + ".csv", trigger_vec_intro, delimiter=",", fmt='%01.0u')
 

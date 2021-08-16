@@ -1,4 +1,5 @@
-docker run -it --gpus all --name ale_container \
+docker run -it --gpus all --name ale_container -h ale_container \
     -v /home/mohr/pytorch-dqn/container_mount:/workspace/container_mount \
     -v /home/mohr/pytorch-dqn-data/container_mount/data:/workspace/container_mount/data \
+    -v /home/mohr/pytorch-dqn-data/container_mount/ramdisk:/workspace/container_mount/ramdisk \
     ale_image bash

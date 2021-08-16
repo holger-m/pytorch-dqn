@@ -1,0 +1,1 @@
+sudo mount -t tmpfs -o size=8192M none /home/mohr/pytorch-dqn-data/container_mount/ramdisk
