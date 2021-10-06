@@ -143,7 +143,7 @@ total_reward = 0.0
 total_total_reward = 0.0
 
 n_frames = 25200  # must be divisible by 4
-human_play_flag = False
+human_play_flag = True
 
 loop_count = 0
 loop_count_intro = 0
