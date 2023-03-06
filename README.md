@@ -1,4 +1,4 @@
-# pytorch-dqn
+# initial-code-share
 
 Important: nvidia docker must be installed in order to make pytorch image work!
 
